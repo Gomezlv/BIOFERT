@@ -1,0 +1,229 @@
+<div class="app-shell">
+  <header class="topbar">
+    <div>
+      <div class="app-title">MetaGanado — Demo clase</div>
+      <div class="app-sub">Angular + Express + PostgreSQL (sin Docker)</div>
+    </div>
+    <button class="btn" type="button" (click)="refreshAll()">Refrescar</button>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab" [class.active]="screen() === 'inicio'" (click)="navigate('inicio')">Inicio</button>
+    <button class="tab" [class.active]="screen() === 'sensores'" (click)="navigate('sensores')">Sensores</button>
+    <button class="tab" [class.active]="screen() === 'recomendaciones'" (click)="navigate('recomendaciones')">Recomendaciones</button>
+    <button class="tab" [class.active]="screen() === 'reportes'" (click)="navigate('reportes')">Reportes</button>
+    <button class="tab" [class.active]="screen() === 'perfil'" (click)="navigate('perfil')">Perfil</button>
+  </nav>
+
+  <main class="page">
+    @if (screen() === 'inicio') {
+      <section class="card">
+        <h3>Inicio</h3>
+        <p>
+          Finca actual:
+          <b>{{ selectedFarm()?.name ?? '—' }}</b>
+          · Cabezas: <b>{{ dashboard()?.headsActive ?? 0 }}</b>
+          · Área: <b>{{ selectedFarm()?.area_ha ?? '—' }}</b> ha
+        </p>
+
+        <div class="kpis">
+          <div class="kpi">
+            <div class="kpi-lbl">Emisiones hoy</div>
+            <div class="kpi-val">{{ (dashboard()?.emissionsTodayKg ?? 0).toFixed(1) }} kg</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-lbl">Cabezas activas</div>
+            <div class="kpi-val">{{ dashboard()?.headsActive ?? 0 }}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-lbl">Reducción mes</div>
+            <div class="kpi-val">{{ dashboard()?.reductionMonthPct ?? 0 }}%</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-lbl">Bonos estimados</div>
+            <div class="kpi-val">{{ formatUsd(dashboard()?.bondsEstimatedUsd ?? 0) }}</div>
+          </div>
+        </div>
+      </section>
+
+      @if (dashboard()?.alertSensor) {
+        <section class="card alert-card" style="margin-top:12px;">
+          <div class="alert-title">
+            <b>Sensor {{ dashboard()!.alertSensor!.code }} — {{ dashboard()!.alertSensor!.zone }} en alerta</b>
+          </div>
+          <div class="alert-body">
+            {{ dashboard()!.alertSensor!.ch4_ppm ?? '—' }} ppm CH₄ detectado. Superó umbral de {{ dashboard()!.alertSensor!.threshold_ppm }} ppm.
+          </div>
+          <button class="link-btn" type="button" (click)="navigate('sensores')">Ver detalles →</button>
+        </section>
+      }
+
+      @if (dashboard()?.recommendationDay) {
+        <section class="card rec-day" style="margin-top:12px;">
+          <div class="rec-day-label"><b>Recomendación del día</b></div>
+          <div class="rec-day-title">{{ dashboard()!.recommendationDay!.title }}</div>
+          <div class="rec-day-body">
+            {{ dashboard()!.recommendationDay!.notes ?? '—' }}
+            · Reducción esperada: -{{ dashboard()!.recommendationDay!.expected_reduction_pct ?? '—' }}% CH₄
+          </div>
+          <button class="link-btn" type="button" (click)="navigate('recomendaciones')">Ver detalles</button>
+        </section>
+      }
+
+      <section class="card" style="margin-top:12px;">
+        <div class="chart-head">
+          <div>
+            <h3 style="margin:0;">Emisiones últimas 24h</h3>
+            <p style="margin:4px 0 0 0;">kg CH₄ / hora</p>
+          </div>
+        </div>
+        <div class="chart-wrap">
+          <svg viewBox="0 0 320 80" width="100%" height="90" preserveAspectRatio="none">
+            <polyline [attr.points]="chartPoints()" fill="none" stroke="#2d7a4f" stroke-width="2" stroke-linejoin="round"></polyline>
+          </svg>
+        </div>
+      </section>
+    }
+
+    @if (screen() === 'sensores') {
+      <section class="card">
+        <h3>Sensores IoT</h3>
+        <p>Filtra por estado.</p>
+
+        <div class="filters">
+          <button class="filter-btn" [class.active]="sensorFilter()==='todos'" (click)="sensorFilter.set('todos')">Todos</button>
+          <button class="filter-btn" [class.active]="sensorFilter()==='activo'" (click)="sensorFilter.set('activo')">Normal</button>
+          <button class="filter-btn" [class.active]="sensorFilter()==='alerta'" (click)="sensorFilter.set('alerta')">Alerta</button>
+          <button class="filter-btn" [class.active]="sensorFilter()==='inactivo'" (click)="sensorFilter.set('inactivo')">Inactivo</button>
+        </div>
+
+        <div class="list" style="margin-top:10px;">
+          @for (s of filteredSensors(); track s.id) {
+            <div class="row">
+              <div class="row-main">
+                <div class="row-title">
+                  <span class="pill">{{ s.code }}</span>
+                  <span>{{ s.zone }}</span>
+                  <span class="badge" [class.pending]="s.status==='alerta'" [class.applied]="s.status==='activo'" [class.rejected]="s.status==='inactivo'">
+                    {{ s.status }}
+                  </span>
+                </div>
+                <div class="row-sub">Batería: {{ s.battery_pct }}%</div>
+              </div>
+              <div class="row-right">
+                <div class="ppm" [class.alert]="s.status === 'alerta'">{{ s.last_ch4_ppm ?? '—' }}</div>
+                <div class="ppm-unit">ppm CH₄</div>
+              </div>
+            </div>
+          } @empty {
+            <div class="muted">No hay sensores para este filtro.</div>
+          }
+        </div>
+      </section>
+    }
+
+    @if (screen() === 'recomendaciones') {
+      <section class="card">
+        <h3>Recomendaciones IA</h3>
+        <p>Estas recomendaciones son generadas por IA (el usuario no las crea manualmente en la demo).</p>
+        <div class="list">
+          @for (r of recs(); track r.farm_rec_id) {
+            <div class="row">
+              <div class="row-main">
+                <div class="row-title">
+                  <span>{{ r.title }}</span>
+                  <span
+                    class="badge"
+                    [class.pending]="r.status==='pendiente'"
+                    [class.applied]="r.status==='aplicada'"
+                    [class.rejected]="r.status==='descartada'"
+                  >
+                    {{ recStatusLabel[r.status] }}
+                  </span>
+                </div>
+                <div class="row-sub">Impacto: {{ r.expected_reduction_pct ?? '—' }}% · Dificultad: {{ r.difficulty }}</div>
+              </div>
+            </div>
+          } @empty {
+            <div class="muted">No hay recomendaciones.</div>
+          }
+        </div>
+      </section>
+    }
+
+    @if (screen() === 'reportes') {
+      <section class="card">
+        <h3>Reportes</h3>
+        <p>Bonos de carbono e ingresos (regla demo: 1 bono = $40 USD).</p>
+        <div class="kpis">
+          <div class="kpi">
+            <div class="kpi-lbl">CO₂eq reducido</div>
+            <div class="kpi-val">{{ (reports()?.co2eqReducedT ?? 0).toFixed(1) }} t</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-lbl">Valor estimado (ganancia)</div>
+            <div class="kpi-val">{{ formatUsd(reports()?.valueEstimatedUsd ?? 0) }}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-lbl">Bonos de carbono</div>
+            <div class="kpi-val">{{ reports()?.bondsCount ?? 0 }}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-lbl">Ingresos acumulados</div>
+            <div class="kpi-val">{{ formatUsd(reports()?.revenueAccumUsd ?? 0) }}</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top:12px;">
+        <h3 style="margin:0 0 8px 0;">CO₂eq reducido por mes</h3>
+        <div class="bar-chart">
+          @for (b of co2eqBarHeights(); track b.month) {
+            <div class="bar-col">
+              <div class="bar-val">{{ b.value.toFixed(1) }}t</div>
+              <div class="bar" [style.height.px]="b.h"></div>
+              <div class="bar-month">{{ b.month }}</div>
+            </div>
+          } @empty {
+            <div class="muted">No hay datos mensuales.</div>
+          }
+        </div>
+      </section>
+    }
+
+    @if (screen() === 'perfil') {
+      <section class="card">
+        <h3>Perfil</h3>
+        <p>Datos del usuario y selección de finca.</p>
+
+        <div class="profile-grid">
+          <div>
+            <div><b>Nombre:</b> {{ profile()?.user?.full_name ?? '—' }}</div>
+            <div><b>Rol:</b> {{ profile()?.user?.role ?? '—' }}</div>
+            <div><b>Ubicación:</b> {{ profile()?.user?.location ?? '—' }}</div>
+            <div><b>Email:</b> {{ profile()?.user?.email ?? '—' }}</div>
+          </div>
+          <div>
+            <label>
+              Finca a visualizar
+              <select class="input" [value]="pendingFarmId() ?? selectedFarmId()" (change)="onFarmSelect($any($event.target).value)">
+                @for (f of farms(); track f.id) {
+                  <option [value]="f.id">{{ f.name }}</option>
+                }
+              </select>
+            </label>
+
+            <div style="display:grid; gap:8px; margin-top:10px;">
+              <button class="btn primary" type="button" [disabled]="(pendingFarmId() ?? selectedFarmId()) === selectedFarmId()" (click)="confirmFarmChange()">
+                Confirmar cambio de finca
+              </button>
+              <button class="btn" type="button">Editar credenciales</button>
+              <button class="btn" type="button">Cerrar sesión</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    }
+  </main>
+</div>
+
