@@ -1,229 +1,728 @@
-<div class="app-shell">
-  <header class="topbar">
-    <div>
-      <div class="app-title">MetaGanado — Demo clase</div>
-      <div class="app-sub">Angular + Express + PostgreSQL (sin Docker)</div>
+@if (authScreen()) {
+  @if (authStep() === 'welcome') {
+    <div class="welcome-shell">
+      <div class="welcome-wrap">
+        <div class="brand">
+          <div class="logo-badge">
+            <img class="logo-img" src="logo.png" alt="Biofert" />
+          </div>
+          <div class="brand-name">Biofert</div>
+          <div class="brand-slogan">Mide. Reduce. Monetiza.</div>
+        </div>
+
+        <div class="welcome-actions">
+          <button class="btn primary big" type="button" (click)="startLogin()">Iniciar sesión</button>
+          <button class="btn ghost big" type="button" (click)="startRegister()">Registrarse</button>
+        </div>
+      </div>
     </div>
-    <button class="btn" type="button" (click)="refreshAll()">Refrescar</button>
-  </header>
-
-  <nav class="tabs">
-    <button class="tab" [class.active]="screen() === 'inicio'" (click)="navigate('inicio')">Inicio</button>
-    <button class="tab" [class.active]="screen() === 'sensores'" (click)="navigate('sensores')">Sensores</button>
-    <button class="tab" [class.active]="screen() === 'recomendaciones'" (click)="navigate('recomendaciones')">Recomendaciones</button>
-    <button class="tab" [class.active]="screen() === 'reportes'" (click)="navigate('reportes')">Reportes</button>
-    <button class="tab" [class.active]="screen() === 'perfil'" (click)="navigate('perfil')">Perfil</button>
-  </nav>
-
-  <main class="page">
-    @if (screen() === 'inicio') {
-      <section class="card">
-        <h3>Inicio</h3>
-        <p>
-          Finca actual:
-          <b>{{ selectedFarm()?.name ?? '—' }}</b>
-          · Cabezas: <b>{{ dashboard()?.headsActive ?? 0 }}</b>
-          · Área: <b>{{ selectedFarm()?.area_ha ?? '—' }}</b> ha
-        </p>
-
-        <div class="kpis">
-          <div class="kpi">
-            <div class="kpi-lbl">Emisiones hoy</div>
-            <div class="kpi-val">{{ (dashboard()?.emissionsTodayKg ?? 0).toFixed(1) }} kg</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-lbl">Cabezas activas</div>
-            <div class="kpi-val">{{ dashboard()?.headsActive ?? 0 }}</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-lbl">Reducción mes</div>
-            <div class="kpi-val">{{ dashboard()?.reductionMonthPct ?? 0 }}%</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-lbl">Bonos estimados</div>
-            <div class="kpi-val">{{ formatUsd(dashboard()?.bondsEstimatedUsd ?? 0) }}</div>
-          </div>
+  } @else {
+    <div class="auth-shell">
+      <div class="auth-card card">
+        <div class="auth-top">
+          <button class="btn tiny" type="button" (click)="backToWelcome()">← Volver</button>
+          <div class="app-title" style="font-size:20px;">BIOFERT</div>
         </div>
-      </section>
+        <p class="auth-lead"></p>
 
-      @if (dashboard()?.alertSensor) {
-        <section class="card alert-card" style="margin-top:12px;">
-          <div class="alert-title">
-            <b>Sensor {{ dashboard()!.alertSensor!.code }} — {{ dashboard()!.alertSensor!.zone }} en alerta</b>
-          </div>
-          <div class="alert-body">
-            {{ dashboard()!.alertSensor!.ch4_ppm ?? '—' }} ppm CH₄ detectado. Superó umbral de {{ dashboard()!.alertSensor!.threshold_ppm }} ppm.
-          </div>
-          <button class="link-btn" type="button" (click)="navigate('sensores')">Ver detalles →</button>
-        </section>
-      }
-
-      @if (dashboard()?.recommendationDay) {
-        <section class="card rec-day" style="margin-top:12px;">
-          <div class="rec-day-label"><b>Recomendación del día</b></div>
-          <div class="rec-day-title">{{ dashboard()!.recommendationDay!.title }}</div>
-          <div class="rec-day-body">
-            {{ dashboard()!.recommendationDay!.notes ?? '—' }}
-            · Reducción esperada: -{{ dashboard()!.recommendationDay!.expected_reduction_pct ?? '—' }}% CH₄
-          </div>
-          <button class="link-btn" type="button" (click)="navigate('recomendaciones')">Ver detalles</button>
-        </section>
-      }
-
-      <section class="card" style="margin-top:12px;">
-        <div class="chart-head">
-          <div>
-            <h3 style="margin:0;">Emisiones últimas 24h</h3>
-            <p style="margin:4px 0 0 0;">kg CH₄ / hora</p>
-          </div>
-        </div>
-        <div class="chart-wrap">
-          <svg viewBox="0 0 320 80" width="100%" height="90" preserveAspectRatio="none">
-            <polyline [attr.points]="chartPoints()" fill="none" stroke="#2d7a4f" stroke-width="2" stroke-linejoin="round"></polyline>
-          </svg>
-        </div>
-      </section>
-    }
-
-    @if (screen() === 'sensores') {
-      <section class="card">
-        <h3>Sensores IoT</h3>
-        <p>Filtra por estado.</p>
-
-        <div class="filters">
-          <button class="filter-btn" [class.active]="sensorFilter()==='todos'" (click)="sensorFilter.set('todos')">Todos</button>
-          <button class="filter-btn" [class.active]="sensorFilter()==='activo'" (click)="sensorFilter.set('activo')">Normal</button>
-          <button class="filter-btn" [class.active]="sensorFilter()==='alerta'" (click)="sensorFilter.set('alerta')">Alerta</button>
-          <button class="filter-btn" [class.active]="sensorFilter()==='inactivo'" (click)="sensorFilter.set('inactivo')">Inactivo</button>
+        <div class="auth-tabs">
+          <button type="button" class="tab" [class.active]="authTab() === 'login'" (click)="setAuthTab('login')">Iniciar sesión</button>
+          <button type="button" class="tab" [class.active]="authTab() === 'register'" (click)="setAuthTab('register')">Registro</button>
         </div>
 
-        <div class="list" style="margin-top:10px;">
-          @for (s of filteredSensors(); track s.id) {
-            <div class="row">
-              <div class="row-main">
-                <div class="row-title">
-                  <span class="pill">{{ s.code }}</span>
-                  <span>{{ s.zone }}</span>
-                  <span class="badge" [class.pending]="s.status==='alerta'" [class.applied]="s.status==='activo'" [class.rejected]="s.status==='inactivo'">
-                    {{ s.status }}
-                  </span>
-                </div>
-                <div class="row-sub">Batería: {{ s.battery_pct }}%</div>
-              </div>
-              <div class="row-right">
-                <div class="ppm" [class.alert]="s.status === 'alerta'">{{ s.last_ch4_ppm ?? '—' }}</div>
-                <div class="ppm-unit">ppm CH₄</div>
-              </div>
-            </div>
-          } @empty {
-            <div class="muted">No hay sensores para este filtro.</div>
-          }
-        </div>
-      </section>
-    }
+        @if (authError()) {
+          <div class="banner err">{{ authError() }}</div>
+        }
 
-    @if (screen() === 'recomendaciones') {
-      <section class="card">
-        <h3>Recomendaciones IA</h3>
-        <p>Estas recomendaciones son generadas por IA (el usuario no las crea manualmente en la demo).</p>
-        <div class="list">
-          @for (r of recs(); track r.farm_rec_id) {
-            <div class="row">
-              <div class="row-main">
-                <div class="row-title">
-                  <span>{{ r.title }}</span>
-                  <span
-                    class="badge"
-                    [class.pending]="r.status==='pendiente'"
-                    [class.applied]="r.status==='aplicada'"
-                    [class.rejected]="r.status==='descartada'"
-                  >
-                    {{ recStatusLabel[r.status] }}
-                  </span>
-                </div>
-                <div class="row-sub">Impacto: {{ r.expected_reduction_pct ?? '—' }}% · Dificultad: {{ r.difficulty }}</div>
-              </div>
-            </div>
-          } @empty {
-            <div class="muted">No hay recomendaciones.</div>
-          }
-        </div>
-      </section>
-    }
-
-    @if (screen() === 'reportes') {
-      <section class="card">
-        <h3>Reportes</h3>
-        <p>Bonos de carbono e ingresos (regla demo: 1 bono = $40 USD).</p>
-        <div class="kpis">
-          <div class="kpi">
-            <div class="kpi-lbl">CO₂eq reducido</div>
-            <div class="kpi-val">{{ (reports()?.co2eqReducedT ?? 0).toFixed(1) }} t</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-lbl">Valor estimado (ganancia)</div>
-            <div class="kpi-val">{{ formatUsd(reports()?.valueEstimatedUsd ?? 0) }}</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-lbl">Bonos de carbono</div>
-            <div class="kpi-val">{{ reports()?.bondsCount ?? 0 }}</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-lbl">Ingresos acumulados</div>
-            <div class="kpi-val">{{ formatUsd(reports()?.revenueAccumUsd ?? 0) }}</div>
-          </div>
-        </div>
-      </section>
-
-      <section class="card" style="margin-top:12px;">
-        <h3 style="margin:0 0 8px 0;">CO₂eq reducido por mes</h3>
-        <div class="bar-chart">
-          @for (b of co2eqBarHeights(); track b.month) {
-            <div class="bar-col">
-              <div class="bar-val">{{ b.value.toFixed(1) }}t</div>
-              <div class="bar" [style.height.px]="b.h"></div>
-              <div class="bar-month">{{ b.month }}</div>
-            </div>
-          } @empty {
-            <div class="muted">No hay datos mensuales.</div>
-          }
-        </div>
-      </section>
-    }
-
-    @if (screen() === 'perfil') {
-      <section class="card">
-        <h3>Perfil</h3>
-        <p>Datos del usuario y selección de finca.</p>
-
-        <div class="profile-grid">
-          <div>
-            <div><b>Nombre:</b> {{ profile()?.user?.full_name ?? '—' }}</div>
-            <div><b>Rol:</b> {{ profile()?.user?.role ?? '—' }}</div>
-            <div><b>Ubicación:</b> {{ profile()?.user?.location ?? '—' }}</div>
-            <div><b>Email:</b> {{ profile()?.user?.email ?? '—' }}</div>
-          </div>
-          <div>
+        @if (authTab() === 'login') {
+          <form class="form" [formGroup]="loginForm" (ngSubmit)="submitLogin()">
             <label>
-              Finca a visualizar
-              <select class="input" [value]="pendingFarmId() ?? selectedFarmId()" (change)="onFarmSelect($any($event.target).value)">
-                @for (f of farms(); track f.id) {
-                  <option [value]="f.id">{{ f.name }}</option>
-                }
-              </select>
+              Email
+              <input class="input" type="email" formControlName="email" autocomplete="username" />
             </label>
+            @if (loginForm.controls.email.touched && loginForm.controls.email.invalid) {
+              <div class="field-err">
+                @if (loginForm.controls.email.errors?.['required']) { El email es obligatorio. }
+                @else { Ingresa un email válido. }
+              </div>
+            }
+            <label>
+              Contraseña
+              <input class="input" type="password" formControlName="password" autocomplete="current-password" />
+            </label>
+            @if (loginForm.controls.password.touched && loginForm.controls.password.invalid) {
+              <div class="field-err">La contraseña es obligatoria.</div>
+            }
+            <button class="btn primary" type="submit" [disabled]="authBusy()">Entrar</button>
+          </form>
+        } @else {
+          <form class="form" [formGroup]="registerForm" (ngSubmit)="submitRegister()">
+            <label>
+              Nombre completo
+              <input class="input" type="text" formControlName="full_name" autocomplete="name" />
+            </label>
+            @if (registerForm.controls.full_name.touched && registerForm.controls.full_name.invalid) {
+              <div class="field-err">El nombre es obligatorio.</div>
+            }
+            <label>
+              Email
+              <input class="input" type="email" formControlName="email" autocomplete="username" />
+            </label>
+            @if (registerForm.controls.email.touched && registerForm.controls.email.invalid) {
+              <div class="field-err">
+                @if (registerForm.controls.email.errors?.['required']) { El email es obligatorio. }
+                @else { Ingresa un email válido. }
+              </div>
+            }
+            <label>
+              Contraseña (mín. 6 caracteres)
+              <input class="input" type="password" formControlName="password" autocomplete="new-password" />
+            </label>
+            @if (registerForm.controls.password.touched && registerForm.controls.password.invalid) {
+              <div class="field-err">
+                @if (registerForm.controls.password.errors?.['required']) { La contraseña es obligatoria. }
+                @else { La contraseña debe tener al menos 6 caracteres. }
+              </div>
+            }
+            <label>
+              Ubicación (opcional)
+              <input class="input" type="text" formControlName="location" autocomplete="address-level1" />
+            </label>
+            <button class="btn primary" type="submit" [disabled]="authBusy()">Crear cuenta</button>
+          </form>
+        }
 
-            <div style="display:grid; gap:8px; margin-top:10px;">
-              <button class="btn primary" type="button" [disabled]="(pendingFarmId() ?? selectedFarmId()) === selectedFarmId()" (click)="confirmFarmChange()">
-                Confirmar cambio de finca
-              </button>
-              <button class="btn" type="button">Editar credenciales</button>
-              <button class="btn" type="button">Cerrar sesión</button>
+        
+      </div>
+    </div>
+  }
+} @else {
+  <div class="app-layout">
+    <header class="topbar">
+      <div>
+        <div class="app-title">BIOFERT</div>
+        <div class="app-sub">Finca: {{ selectedFarm()?.name ?? '—' }}</div>
+      </div>
+      <button class="btn" type="button" (click)="refreshAll()">Refrescar</button>
+    </header>
+
+    <main class="page-scroll">
+      @if (selectedFarmId() === null) {
+        <section class="card">
+          <h3>Sin fincas</h3>
+          <p class="muted">No hay fincas asociadas a tu cuenta. Contacta al administrador o registra una cuenta nueva.</p>
+        </section>
+      }
+
+      @if (screen() === 'inicio' && selectedFarmId() !== null) {
+        <section class="card">
+          <h3>Dashboard</h3>
+          <p>
+            Finca actual:
+            <b>{{ selectedFarm()?.name ?? '—' }}</b>
+            · Cabezas: <b>{{ dashboard()?.headsActive ?? 0 }}</b>
+            · Área: <b>{{ selectedFarm()?.area_ha ?? '—' }}</b> ha
+          </p>
+
+          <div class="kpis">
+            <div class="kpi">
+              <div class="kpi-lbl">Emisiones hoy</div>
+              <div class="kpi-val">{{ (dashboard()?.emissionsTodayKg ?? 0).toFixed(1) }} kg</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-lbl">Cabezas activas</div>
+              <div class="kpi-val">{{ dashboard()?.headsActive ?? 0 }}</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-lbl">Reducción mes</div>
+              <div class="kpi-val">{{ dashboard()?.reductionMonthPct ?? 0 }}%</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-lbl">Bonos estimados</div>
+              <div class="kpi-val">{{ formatUsd(dashboard()?.bondsEstimatedUsd ?? 0) }}</div>
             </div>
           </div>
-        </div>
-      </section>
-    }
-  </main>
-</div>
+        </section>
 
+        @if (dashboard()?.alertSensor) {
+          <section class="card alert-card" style="margin-top:12px;">
+            <div class="alert-title">
+              <b>Sensor {{ dashboard()!.alertSensor!.code }} — {{ dashboard()!.alertSensor!.zone }} en alerta</b>
+            </div>
+            <div class="alert-body">
+              {{ dashboard()!.alertSensor!.ch4_ppm ?? '—' }} ppm CH₄ detectado. Superó umbral de {{ dashboard()!.alertSensor!.threshold_ppm }} ppm.
+            </div>
+            <button class="link-btn" type="button" (click)="navigate('sensores')">Ver detalles →</button>
+          </section>
+        }
+
+        @if (dashboard()?.recommendationDay) {
+          <section class="card rec-day" style="margin-top:12px;">
+            <div class="rec-day-label"><b>Recomendación del día</b></div>
+            <div class="rec-day-title">{{ dashboard()!.recommendationDay!.title }}</div>
+            <div class="rec-day-body">
+              {{ dashboard()!.recommendationDay!.notes ?? '—' }}
+              · Reducción esperada: -{{ dashboard()!.recommendationDay!.expected_reduction_pct ?? '—' }}% CH₄
+            </div>
+            <button class="link-btn" type="button" (click)="navigate('recomendaciones')">Ver detalles</button>
+          </section>
+        }
+
+        <section class="card rec-day rec-day-blue" style="margin-top:12px;">
+          <div class="rec-day-label"><b>Recomendación IA destacada</b></div>
+          <div class="rec-day-title">{{ dashboardAiRec().title }}</div>
+          <div class="rec-day-body">
+            {{ dashboardAiRec().short }}
+            · Reducción esperada: -{{ dashboardAiRec().expected_reduction_pct }}% CH₄
+          </div>
+          <button class="link-btn" type="button" (click)="navigate('recomendaciones')">Ver todas</button>
+        </section>
+
+        <section class="card" style="margin-top:12px;">
+          <div class="chart-head">
+            <div>
+              <h3 style="margin:0;">Emisiones últimas 24h</h3>
+              <p style="margin:4px 0 0 0;">kg CH₄ / hora</p>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            @if (chartModel(); as cm) {
+              <div class="chart-legend">
+                <span class="legend-item"><span class="legend-dot ok"></span> Serie (24h)</span>
+                <span class="legend-item"><span class="legend-dot avg"></span> Promedio: <b>{{ cm.avg.toFixed(2) }}</b></span>
+                <span class="legend-item"><span class="legend-dot peak"></span> Picos (alto)</span>
+              </div>
+              <svg [attr.viewBox]="'0 0 ' + cm.w + ' ' + cm.h" width="100%" height="220" preserveAspectRatio="xMidYMid meet">
+                <!-- Ejes -->
+                <line [attr.x1]="cm.padL" [attr.y1]="cm.padT" [attr.x2]="cm.padL" [attr.y2]="cm.h - cm.padB" class="axis"></line>
+                <line [attr.x1]="cm.padL" [attr.y1]="cm.h - cm.padB" [attr.x2]="cm.w - cm.padR" [attr.y2]="cm.h - cm.padB" class="axis"></line>
+                <text
+                  class="axis-label"
+                  text-anchor="middle"
+                  [attr.transform]="'translate(14 ' + (cm.padT + (cm.h - cm.padT - cm.padB) / 2) + ') rotate(-90)'"
+                >
+                  kg CH₄
+                </text>
+                <text [attr.x]="(cm.padL + (cm.w - cm.padR)) / 2" [attr.y]="cm.h - 4" text-anchor="middle" class="axis-label">Hora</text>
+
+                <!-- Grid + ticks Y -->
+                @for (t of cm.ticksY; track $index) {
+                  <line [attr.x1]="cm.padL" [attr.y1]="t.y" [attr.x2]="cm.w - cm.padR" [attr.y2]="t.y" class="grid"></line>
+                  <text [attr.x]="cm.padL - 8" [attr.y]="t.y + 4" text-anchor="end" class="tick">{{ t.label }}</text>
+                }
+
+                <!-- Ticks X -->
+                @for (tx of cm.ticksX; track tx.x) {
+                  <line [attr.x1]="tx.x" [attr.y1]="cm.h - cm.padB" [attr.x2]="tx.x" [attr.y2]="cm.h - cm.padB + 4" class="axis"></line>
+                  <text [attr.x]="tx.x" [attr.y]="cm.h - 18" text-anchor="middle" class="tick">{{ tx.label }}</text>
+                }
+
+                <!-- Promedio -->
+                <line [attr.x1]="cm.padL" [attr.y1]="cm.avgY" [attr.x2]="cm.w - cm.padR" [attr.y2]="cm.avgY" class="avg-line"></line>
+
+                <!-- Serie -->
+                <polyline [attr.points]="cm.polyline" fill="none" class="series"></polyline>
+
+                <!-- Marcadores (max, min) -->
+                @for (p of cm.points; track p.i) {
+                  @if (p.isMax || p.isMin) {
+                    <circle [attr.cx]="p.x" [attr.cy]="p.y" r="3.8" class="marker-extreme"></circle>
+                  }
+                }
+
+                <!-- Picos en rojo -->
+                @for (p of cm.points; track p.i) {
+                  @if (p.isPeak) {
+                    <circle [attr.cx]="p.x" [attr.cy]="p.y" r="3.2" class="marker-peak">
+                      <title>{{ p.v.toFixed(2) }} kg CH₄/h</title>
+                    </circle>
+                  } @else {
+                    <circle [attr.cx]="p.x" [attr.cy]="p.y" r="2.2" class="marker"></circle>
+                  }
+                }
+              </svg>
+            } @else {
+              <div class="muted">Sin datos de emisiones para las últimas 24h.</div>
+            }
+          </div>
+        </section>
+      }
+
+      @if (screen() === 'sensores' && selectedFarmId() !== null) {
+        <section class="card" style="margin-bottom:12px;">
+          <h3>Mapa</h3>
+          <p>Mapa de la finca actual.</p>
+
+          @if (googleMapsEmbedUrl(); as url) {
+            <div class="map-wrap">
+              <iframe class="map-frame" [src]="url" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+            </div>
+          } @else {
+            <div class="muted">Mapa no disponible (falta configurar Google Maps en el backend).</div>
+          }
+        </section>
+
+        <section class="card">
+          <h3>Sensores IoT</h3>
+          <p>Filtra por estado.</p>
+
+          <div class="filters">
+            <button class="filter-btn" [class.active]="sensorFilter()==='todos'" (click)="sensorFilter.set('todos')">Todos</button>
+            <button class="filter-btn" [class.active]="sensorFilter()==='activo'" (click)="sensorFilter.set('activo')">Normal</button>
+            <button class="filter-btn" [class.active]="sensorFilter()==='alerta'" (click)="sensorFilter.set('alerta')">Alerta</button>
+            <button class="filter-btn" [class.active]="sensorFilter()==='inactivo'" (click)="sensorFilter.set('inactivo')">Inactivo</button>
+          </div>
+
+          <div class="list" style="margin-top:10px;">
+            @for (s of filteredSensors(); track s.id) {
+              <div class="row">
+                <div class="row-main">
+                  <div class="row-title">
+                    <span class="pill">{{ s.code }}</span>
+                    <span>{{ s.zone }}</span>
+                    <span class="badge" [class.pending]="s.status==='alerta'" [class.applied]="s.status==='activo'" [class.rejected]="s.status==='inactivo'">
+                      {{ s.status }}
+                    </span>
+                  </div>
+                  <div class="row-sub">Batería: {{ s.battery_pct }}%</div>
+                </div>
+                <div class="row-right">
+                  <div class="ppm" [class.alert]="s.status === 'alerta'">{{ s.last_ch4_ppm ?? '—' }}</div>
+                  <div class="ppm-unit">ppm CH₄</div>
+                </div>
+              </div>
+            } @empty {
+              <div class="muted">No hay sensores para este filtro.</div>
+            }
+          </div>
+        </section>
+      }
+
+      @if (screen() === 'recomendaciones' && selectedFarmId() !== null) {
+        <section class="card">
+          <h3>Recomendaciones IA</h3>
+          <p>Lista de recomendaciones</p>
+
+          <div class="filters">
+            <button class="filter-btn" [class.active]="aiRecFilter()==='todas'" (click)="aiRecFilter.set('todas')">Todas</button>
+            <button class="filter-btn" [class.active]="aiRecFilter()==='pendiente'" (click)="aiRecFilter.set('pendiente')">Pendientes</button>
+            <button class="filter-btn" [class.active]="aiRecFilter()==='aplicada'" (click)="aiRecFilter.set('aplicada')">Aplicadas</button>
+            <button class="filter-btn" [class.active]="aiRecFilter()==='descartada'" (click)="aiRecFilter.set('descartada')">Descartadas</button>
+          </div>
+
+          <div class="list">
+            @for (r of filteredAiRecs(); track r.id) {
+              <button class="rec-item" type="button" (click)="toggleAiRec(r.id)" [attr.aria-expanded]="expandedAiRecId() === r.id">
+                <div class="rec-head">
+                  <div class="rec-title">{{ r.title }}</div>
+                  <div class="rec-meta">
+                    <span class="badge pending">IA</span>
+                    <span class="badge applied">-{{ r.expected_reduction_pct }}%</span>
+                    <span
+                      class="badge"
+                      [class.pending]="r.status==='pendiente'"
+                      [class.applied]="r.status==='aplicada'"
+                      [class.rejected]="r.status==='descartada'"
+                    >
+                      {{ recStatusLabel[r.status] }}
+                    </span>
+                    <span class="badge" [class.rejected]="r.difficulty==='alta'" [class.pending]="r.difficulty==='media'" [class.applied]="r.difficulty==='facil'">
+                      {{ r.difficulty }}
+                    </span>
+                  </div>
+                </div>
+                <div class="rec-short">{{ r.short }}</div>
+                <div class="rec-chevron">{{ expandedAiRecId() === r.id ? 'Ocultar' : 'Ver respuesta' }} →</div>
+              </button>
+
+              @if (expandedAiRecId() === r.id) {
+                <div class="rec-detail card" style="margin-top:10px;">
+                  <h3 style="margin:0 0 8px 0;">Respuesta de la IA</h3>
+                  <div class="rec-section">
+                    <div class="rec-section-title">Resumen</div>
+                    <div class="rec-section-body">{{ r.response.resumen }}</div>
+                  </div>
+                  <div class="rec-section">
+                    <div class="rec-section-title">Por qué funciona</div>
+                    <ul class="rec-ul">
+                      @for (it of r.response.porQueFunciona; track $index) {
+                        <li>{{ it }}</li>
+                      }
+                    </ul>
+                  </div>
+                  <div class="rec-section">
+                    <div class="rec-section-title">Plan de implementación</div>
+                    <ol class="rec-ol">
+                      @for (it of r.response.pasos; track $index) {
+                        <li>{{ it }}</li>
+                      }
+                    </ol>
+                  </div>
+                  <div class="rec-grid-2">
+                    <div class="rec-section">
+                      <div class="rec-section-title">Riesgos y cuidados</div>
+                      <ul class="rec-ul">
+                        @for (it of r.response.riesgos; track $index) {
+                          <li>{{ it }}</li>
+                        }
+                      </ul>
+                    </div>
+                    <div class="rec-section">
+                      <div class="rec-section-title">Métricas a seguir</div>
+                      <ul class="rec-ul">
+                        @for (it of r.response.metricas; track $index) {
+                          <li>{{ it }}</li>
+                        }
+                      </ul>
+                    </div>
+                  </div>
+                  <div class="rec-section">
+                    <div class="rec-section-title">Costo y tiempo (estimado)</div>
+                    <ul class="rec-ul">
+                      @for (it of r.response.costoTiempo; track $index) {
+                        <li>{{ it }}</li>
+                      }
+                    </ul>
+                  </div>
+
+                  @if (r.status === 'pendiente') {
+                    <div class="rec-actions">
+                      <button class="btn primary" type="button" (click)="applyAiRec(r.id)">Aplicar</button>
+                      <button class="btn danger" type="button" (click)="discardAiRec(r.id)">Descartar</button>
+                    </div>
+                  }
+                </div>
+              }
+            }
+          </div>
+        </section>
+      }
+
+      @if (screen() === 'reportes') {
+        <section class="card">
+          <div class="report-head">
+            <div>
+              <h3 style="margin:0;">Reportes</h3>
+              <p style="margin:4px 0 0 0;">Impacto, certificación y monetización.</p>
+            </div>
+            <span class="badge pending">{{ certTypeLabel }}</span>
+          </div>
+
+          @if (reportActionMessage()) {
+            <div class="banner ok" style="margin-top:10px;">{{ reportActionMessage() }}</div>
+          }
+
+          <!-- 🔝 Fila superior (resumen rápido) -->
+          <div class="report-grid-2" style="margin-top:12px;">
+            <div class="kpi">
+              <div class="kpi-lbl">CO₂eq reducido</div>
+              <div class="kpi-val">{{ (reports()?.co2eqReducedT ?? 0).toFixed(1) }} t</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-lbl">Valor estimado</div>
+              <div class="kpi-val">{{ formatUsd(reports()?.valueEstimatedUsd ?? 0) }}</div>
+            </div>
+          </div>
+
+          <!-- 📊 Estado de certificación -->
+          <div class="cert-block" style="margin-top:12px;">
+            <div class="cert-top">
+              <div>
+                <div class="cert-title">Estado de certificación</div>
+                <div class="cert-sub">Paso {{ certCurrentStepIndex + 1 }} de {{ certSteps.length }}</div>
+              </div>
+              <div class="cert-chip">{{ certTypeLabel }}</div>
+            </div>
+
+            <div class="cert-progress">
+              <div class="cert-progress-bar" [style.width.%]="((certCurrentStepIndex + 1) / certSteps.length) * 100"></div>
+            </div>
+
+            <div class="cert-steps">
+              @for (s of certSteps; track s.id) {
+                <div class="cert-step" [class.done]="$index < certCurrentStepIndex" [class.active]="$index === certCurrentStepIndex" [class.todo]="$index > certCurrentStepIndex">
+                  <div class="cert-dot">
+                    @if ($index < certCurrentStepIndex) { ✓ }
+                    @else { {{ $index + 1 }} }
+                  </div>
+                  <div class="cert-lbl">{{ s.label }}</div>
+                </div>
+              }
+            </div>
+          </div>
+
+          <!-- 📈 Fila de métricas secundarias -->
+          <div class="report-grid-2" style="margin-top:12px;">
+            <div class="kpi">
+              <div class="kpi-lbl">Bonos verificados</div>
+              <div class="kpi-val">{{ reports()?.bondsCount ?? 0 }}</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-lbl">Ingresos acumulados</div>
+              <div class="kpi-val">{{ formatUsd(reports()?.revenueAccumUsd ?? 0) }}</div>
+            </div>
+          </div>
+
+          <!-- 📉 Gráfica -->
+          <div class="card" style="margin-top:12px; border-color:#e5f2e8; box-shadow:none;">
+            <h3 style="margin:0 0 8px 0;">CO₂eq reducido por mes</h3>
+            <div class="bar-chart">
+              @for (b of co2eqBarHeights(); track b.month) {
+                <div class="bar-col">
+                  <div class="bar-val">{{ b.value.toFixed(1) }}t</div>
+                  <div class="bar" [style.height.px]="b.h"></div>
+                  <div class="bar-month">{{ b.month }}</div>
+                </div>
+              } @empty {
+                <div class="muted">No hay datos mensuales.</div>
+              }
+            </div>
+          </div>
+
+          <!-- 🕒 Línea de tiempo -->
+          <div class="timeline" style="margin-top:12px;">
+            <div class="timeline-title">Línea de tiempo</div>
+            <div class="timeline-list">
+              <div class="tl-item">
+                <div class="tl-dot done"></div>
+                <div class="tl-body">
+                  <div class="tl-desc"><b>Inicio de medición</b></div>
+                  <div class="tl-date">{{ todayLabel }}</div>
+                </div>
+              </div>
+              <div class="tl-item">
+                <div class="tl-dot done"></div>
+                <div class="tl-body">
+                  <div class="tl-desc"><b>Análisis completado</b></div>
+                  <div class="tl-date">{{ todayLabel }}</div>
+                </div>
+              </div>
+              <div class="tl-item">
+                <div class="tl-dot active"></div>
+                <div class="tl-body">
+                  <div class="tl-desc"><b>Generación de reporte</b> (en progreso)</div>
+                  <div class="tl-date">{{ todayLabel }}</div>
+                </div>
+              </div>
+              <div class="tl-item">
+                <div class="tl-dot todo"></div>
+                <div class="tl-body">
+                  <div class="tl-desc"><b>Auditoría programada</b></div>
+                  <div class="tl-date">—</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ⬇️ Acción principal -->
+          <div class="report-action">
+            <button class="btn primary report-action-btn" type="button" (click)="generateCertificationReport()" [disabled]="reportGenerating()">
+              <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3v10l3.5-3.5 1.4 1.4-5.9 5.9-5.9-5.9 1.4-1.4L10 13V3zM5 19h14v2H5z"></path>
+              </svg>
+              {{ reportGenerating() ? 'Generando PDF…' : 'Generar reporte para certificadora' }}
+            </button>
+          </div>
+        </section>
+      }
+
+      @if (screen() === 'perfil') {
+        <section class="card">
+          <div class="profile-head">
+            <div class="avatar">{{ userInitials() }}</div>
+            <div>
+              <div class="profile-name">{{ profile()?.user?.full_name ?? '—' }}</div>
+              <div class="profile-role">{{ profile()?.user?.role ?? '—' }}</div>
+              <div class="profile-loc">{{ profile()?.user?.location ?? '—' }}</div>
+            </div>
+          </div>
+
+          <div class="predio-block" style="margin-top:12px;">
+            <div class="predio-title">Datos del predio</div>
+            <div class="predio-list">
+              <div class="predio-item">
+                <svg class="predio-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14v12H5zM7 8v8h10V8z"></path></svg>
+                <div>
+                  <div class="predio-lbl">Cabezas</div>
+                  <div class="predio-val">{{ selectedFarm()?.heads_active ?? 0 }} · {{ selectedFarm()?.breeds_text ?? 'Razas: —' }}</div>
+                </div>
+              </div>
+              <div class="predio-item">
+                <svg class="predio-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z"></path></svg>
+                <div>
+                  <div class="predio-lbl">Finca</div>
+                  <div class="predio-val">{{ selectedFarm()?.name ?? '—' }} · {{ selectedFarm()?.area_ha ?? '—' }} ha</div>
+                </div>
+              </div>
+              <div class="predio-item">
+                <svg class="predio-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c4.4 0 8 3.6 8 8 0 5.2-8 10-8 10S4 16.2 4 11c0-4.4 3.6-8 8-8zm0 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"></path></svg>
+                <div>
+                  <div class="predio-lbl">Piso térmico</div>
+                  <div class="predio-val">{{ selectedFarm()?.thermal_floor ?? '—' }} · {{ selectedFarm()?.altitude_m ?? '—' }} msnm</div>
+                </div>
+              </div>
+              <div class="predio-item">
+                <svg class="predio-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19h12v2H6zM7 17V7h10v10h2V5H5v12z"></path></svg>
+                <div>
+                  <div class="predio-lbl">Modelo</div>
+                  <div class="predio-val">{{ selectedFarm()?.production_model ?? '—' }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="user-metrics" style="margin-top:12px;">
+            <div class="metric-card">
+              <div class="metric-lbl">Intervenciones aplicadas</div>
+              <div class="metric-val">{{ interventionsApplied() }}</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-lbl">Retroalimentaciones</div>
+              <div class="metric-val">{{ feedbackCount() }}</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-lbl">Meses en el sistema</div>
+              <div class="metric-val">{{ monthsInSystem() }}</div>
+            </div>
+          </div>
+
+          <div style="margin-top:12px;">
+            <button class="btn primary report-action-btn" type="button" (click)="openProfileEditor()">Editar perfil</button>
+          </div>
+
+          <div class="profile-logout">
+            <button class="btn" type="button" (click)="openCredentialsEditor()">Editar credenciales</button>
+            <button class="btn danger" type="button" (click)="logout()">Cerrar sesión</button>
+          </div>
+        </section>
+      }
+    </main>
+
+    <nav class="bottom-nav" aria-label="Navegación principal">
+      <button type="button" class="nav-item" [class.active]="screen() === 'inicio'" (click)="navigate('inicio')">
+        <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z"></path></svg>
+        <span>Dashboard</span>
+      </button>
+      <button type="button" class="nav-item" [class.active]="screen() === 'sensores'" (click)="navigate('sensores')">
+        <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 16 0h-2a6 6 0 0 0-12 0zm3 0a5 5 0 0 1 10 0h-2a3 3 0 0 0-6 0zm5 2a2 2 0 0 0-2 2v4h4v-4a2 2 0 0 0-2-2z"></path></svg>
+        <span>Sensores</span>
+      </button>
+      <button type="button" class="nav-item" [class.active]="screen() === 'recomendaciones'" (click)="navigate('recomendaciones')">
+        <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10a2 2 0 0 1 2 2v14l-4-2-3 2-3-2-4 2V5a2 2 0 0 1 2-2zm2 5h6v2H9zm0 4h6v2H9z"></path></svg>
+        <span>Recomendaciones</span>
+      </button>
+      <button type="button" class="nav-item" [class.active]="screen() === 'reportes'" (click)="navigate('reportes')">
+        <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14zm4-2h2V9H8zm4 0h2V7h-2zm4 0h2v-5h-2z"></path></svg>
+        <span>Reportes</span>
+      </button>
+      <button type="button" class="nav-item" [class.active]="screen() === 'perfil'" (click)="navigate('perfil')">
+        <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4.4 0-8 2.2-8 5v2h16v-2c0-2.8-3.6-5-8-5z"></path></svg>
+        <span>Perfil</span>
+      </button>
+    </nav>
+  </div>
+}
+
+@if (showCredentialsEditor()) {
+  <div class="modal-backdrop" (click)="closeCredentialsEditor()">
+    <div class="modal card" (click)="$event.stopPropagation()">
+      <h3 style="margin-top:0;">Editar credenciales</h3>
+      <p class="muted">Introduce tu contraseña actual. Puedes cambiar el email, la contraseña o ambos.</p>
+
+      @if (credentialsMessage(); as cm) {
+        <div class="banner" [class.err]="cm.type === 'err'" [class.ok]="cm.type === 'ok'">{{ cm.text }}</div>
+      }
+
+      <form class="form" [formGroup]="credentialsForm" (ngSubmit)="submitCredentials()">
+        <label>
+          Email
+          <input class="input" type="email" formControlName="email" autocomplete="username" />
+        </label>
+        <label>
+          Contraseña actual
+          <input class="input" type="password" formControlName="current_password" autocomplete="current-password" />
+        </label>
+        <label>
+          Nueva contraseña (opcional)
+          <input class="input" type="password" formControlName="new_password" autocomplete="new-password" />
+        </label>
+        <div class="modal-actions">
+          <button class="btn" type="button" (click)="closeCredentialsEditor()">Cancelar</button>
+          <button class="btn primary" type="submit" [disabled]="credentialsBusy()">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+}
+
+@if (showProfileEditor()) {
+  <div class="modal-backdrop" (click)="closeProfileEditor()">
+    <div class="modal card" (click)="$event.stopPropagation()">
+      <h3 style="margin-top:0;">Editar perfil</h3>
+      <p class="muted">Modifica los datos del usuario y del predio (finca seleccionada).</p>
+
+      @if (profileEditMessage(); as pm) {
+        <div class="banner" [class.err]="pm.type === 'err'" [class.ok]="pm.type === 'ok'">{{ pm.text }}</div>
+      }
+
+      <form class="form" [formGroup]="profileEditForm" (ngSubmit)="submitProfileEdit()">
+        <div class="predio-title">Usuario</div>
+        <label>
+          Nombre completo
+          <input class="input" type="text" formControlName="full_name" autocomplete="name" />
+        </label>
+        <label>
+          Rol/ocupación
+          <input class="input" type="text" formControlName="role" />
+        </label>
+        <label>
+          Ubicación
+          <input class="input" type="text" formControlName="user_location" autocomplete="address-level1" />
+        </label>
+
+        <div class="predio-title" style="margin-top:6px;">Predio</div>
+        <label>
+          Nombre de la finca
+          <input class="input" type="text" formControlName="farm_name" />
+        </label>
+        <label>
+          Ubicación del predio
+          <input class="input" type="text" formControlName="farm_location" />
+        </label>
+        <div class="report-grid-2" style="margin-top:0;">
+          <label>
+            Área (ha)
+            <input class="input" type="number" formControlName="area_ha" />
+          </label>
+          <label>
+            Cabezas
+            <input class="input" type="number" formControlName="heads_active" />
+          </label>
+        </div>
+        <label>
+          Composición de razas
+          <input class="input" type="text" formControlName="breeds_text" placeholder="Ej: Brahman 60% · Angus 40%" />
+        </label>
+        <div class="report-grid-2" style="margin-top:0;">
+          <label>
+            Piso térmico
+            <input class="input" type="text" formControlName="thermal_floor" placeholder="Ej: Cálido" />
+          </label>
+          <label>
+            Altitud (msnm)
+            <input class="input" type="number" formControlName="altitude_m" />
+          </label>
+        </div>
+        <label>
+          Modelo de producción
+          <input class="input" type="text" formControlName="production_model" placeholder="Ej: Doble propósito" />
+        </label>
+
+        <div class="modal-actions">
+          <button class="btn" type="button" (click)="closeProfileEditor()">Cancelar</button>
+          <button class="btn primary" type="submit" [disabled]="profileEditBusy()">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+}

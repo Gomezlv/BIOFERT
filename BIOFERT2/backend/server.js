@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const crypto = require("crypto");
 const { Pool } = require("pg");
 
 const app = express();
@@ -16,22 +17,228 @@ const pool = new Pool({
   database: process.env.PGDATABASE || "metaganado",
 });
 
+/** @type {Map<string, number>} token -> userId */
+const sessions = new Map();
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(String(password), salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  if (!stored || typeof stored !== "string" || !stored.includes(":")) return false;
+  const [salt, hash] = stored.split(":");
+  if (!salt || !hash) return false;
+  try {
+    const verify = crypto.scryptSync(String(password), salt, 64).toString("hex");
+    return crypto.timingSafeEqual(Buffer.from(verify, "hex"), Buffer.from(hash, "hex"));
+  } catch {
+    return false;
+  }
+}
+
+function getSessionUserId(req) {
+  const h = req.headers.authorization;
+  if (!h || !String(h).startsWith("Bearer ")) return null;
+  const token = String(h).slice(7).trim();
+  if (!token) return null;
+  return sessions.get(token) ?? null;
+}
+
+function createSession(userId) {
+  const token = crypto.randomBytes(32).toString("hex");
+  sessions.set(token, userId);
+  return token;
+}
+
+function destroySession(req) {
+  const h = req.headers.authorization;
+  if (!h || !String(h).startsWith("Bearer ")) return;
+  const token = String(h).slice(7).trim();
+  sessions.delete(token);
+}
+
+async function assertFarmOwned(farmId, userId) {
+  const { rows } = await pool.query(
+    `SELECT id FROM farms WHERE id = $1 AND user_id = $2 LIMIT 1;`,
+    [farmId, userId]
+  );
+  return rows.length > 0;
+}
+
 app.get("/api/health", async (_req, res) => {
   res.json({ ok: true });
 });
 
+// GET /api/config (solo autenticado) — configuración cliente (ej. Google Maps)
+app.get("/api/config", async (req, res) => {
+  const userId = getSessionUserId(req);
+  if (!userId) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+  res.json({
+    googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || null,
+  });
+});
+
+// POST /api/auth/register
+app.post("/api/auth/register", async (req, res) => {
+  const { email, password, full_name, location } = req.body || {};
+  if (!email || !password) {
+    return res.status(400).json({ error: "email y password son obligatorios" });
+  }
+  const name = full_name && String(full_name).trim() ? String(full_name).trim() : "Usuario";
+  const loc = location != null && String(location).trim() ? String(location).trim() : null;
+  const pwdHash = hashPassword(password);
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const insUser = `
+      INSERT INTO users (full_name, role, location, email, password_hash)
+      VALUES ($1, 'Ganadero', $2, $3, $4)
+      RETURNING id, full_name, role, location, email;
+    `;
+    let userRow;
+    try {
+      userRow = (await client.query(insUser, [name, loc, String(email).trim().toLowerCase(), pwdHash])).rows[0];
+    } catch (e) {
+      await client.query("ROLLBACK");
+      if (e && e.code === "23505") {
+        return res.status(409).json({ error: "El email ya está registrado" });
+      }
+      throw e;
+    }
+
+    const insFarm = `
+      INSERT INTO farms (user_id, name, location, area_ha, heads_active)
+      VALUES ($1, 'Finca La Esperanza', $2, NULL, 0)
+      RETURNING id;
+    `;
+    await client.query(insFarm, [userRow.id, loc]);
+
+    await client.query("COMMIT");
+
+    const token = createSession(userRow.id);
+    res.status(201).json({ token, user: userRow });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: "No se pudo registrar", detail: String(e.message || e) });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/auth/login
+app.post("/api/auth/login", async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) {
+    return res.status(400).json({ error: "email y password son obligatorios" });
+  }
+  const sql = `SELECT id, full_name, role, location, email, password_hash FROM users WHERE lower(email) = lower($1) LIMIT 1;`;
+  const row = (await pool.query(sql, [String(email).trim()])).rows[0];
+  if (!row || !verifyPassword(password, row.password_hash)) {
+    return res.status(401).json({ error: "Credenciales incorrectas" });
+  }
+  const token = createSession(row.id);
+  const { password_hash: _p, ...user } = row;
+  res.json({ token, user });
+});
+
+// POST /api/auth/logout
+app.post("/api/auth/logout", (req, res) => {
+  destroySession(req);
+  res.json({ ok: true });
+});
+
 // GET /api/profile
-app.get("/api/profile", async (_req, res) => {
-  const userSql = `SELECT id, full_name, role, location, email FROM users ORDER BY id ASC LIMIT 1;`;
-  const user = (await pool.query(userSql)).rows[0] || null;
+app.get("/api/profile", async (req, res) => {
+  const userId = getSessionUserId(req);
+  if (!userId) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+  const userSql = `SELECT id, full_name, role, location, email, created_at FROM users WHERE id = $1 LIMIT 1;`;
+  const user = (await pool.query(userSql, [userId])).rows[0] || null;
   res.json({ user });
 });
 
-// GET /api/farms?userId=1
+// PATCH /api/profile — actualizar email y/o contraseña
+app.patch("/api/profile", async (req, res) => {
+  const userId = getSessionUserId(req);
+  if (!userId) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+  const { current_password, email, new_password } = req.body || {};
+  if (!current_password) {
+    return res.status(400).json({ error: "current_password es obligatorio" });
+  }
+  if (email == null && new_password == null) {
+    return res.status(400).json({ error: "Indica nuevo email y/o new_password" });
+  }
+
+  const u = (await pool.query(`SELECT id, email, password_hash FROM users WHERE id = $1`, [userId])).rows[0];
+  if (!u || !verifyPassword(current_password, u.password_hash)) {
+    return res.status(401).json({ error: "Contraseña actual incorrecta" });
+  }
+
+  const nextEmail = email != null ? String(email).trim().toLowerCase() : null;
+  const nextPwd = new_password != null ? String(new_password) : null;
+
+  if (nextPwd !== null && nextPwd.length < 6) {
+    return res.status(400).json({ error: "La nueva contraseña debe tener al menos 6 caracteres" });
+  }
+
+  try {
+    if (nextEmail && nextEmail !== u.email) {
+      await pool.query(`UPDATE users SET email = $1 WHERE id = $2`, [nextEmail, userId]);
+    }
+    if (nextPwd) {
+      const h = hashPassword(nextPwd);
+      await pool.query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [h, userId]);
+    }
+  } catch (e) {
+    if (e && e.code === "23505") {
+      return res.status(409).json({ error: "El email ya está en uso" });
+    }
+    return res.status(500).json({ error: "No se pudo actualizar", detail: String(e.message || e) });
+  }
+
+  const user = (await pool.query(`SELECT id, full_name, role, location, email FROM users WHERE id = $1`, [userId])).rows[0];
+  res.json({ user });
+});
+
+// PATCH /api/profile/details — actualizar datos del usuario (nombre/rol/ubicación)
+app.patch("/api/profile/details", async (req, res) => {
+  const userId = getSessionUserId(req);
+  if (!userId) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+  const { full_name, role, location } = req.body || {};
+  const name = full_name != null ? String(full_name).trim() : null;
+  const r = role != null ? String(role).trim() : null;
+  const loc = location != null ? String(location).trim() : null;
+
+  if (!name) return res.status(400).json({ error: "full_name es obligatorio" });
+  if (!r) return res.status(400).json({ error: "role es obligatorio" });
+
+  try {
+    await pool.query(`UPDATE users SET full_name = $1, role = $2, location = $3 WHERE id = $4`, [name, r, loc || null, userId]);
+    const user = (await pool.query(`SELECT id, full_name, role, location, email, created_at FROM users WHERE id = $1`, [userId])).rows[0];
+    res.json({ user });
+  } catch (e) {
+    res.status(500).json({ error: "No se pudo actualizar el perfil", detail: String(e.message || e) });
+  }
+});
+
+// GET /api/farms
 app.get("/api/farms", async (req, res) => {
-  const userId = Number(req.query.userId || 1);
+  const userId = getSessionUserId(req);
+  if (!userId) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
   const sql = `
-    SELECT id, user_id, name, location, area_ha, heads_active
+    SELECT id, user_id, name, location, area_ha, heads_active, breeds_text, thermal_floor, altitude_m, production_model
     FROM farms
     WHERE user_id = $1
     ORDER BY id ASC;
@@ -40,9 +247,74 @@ app.get("/api/farms", async (req, res) => {
   res.json(rows);
 });
 
+// PATCH /api/farms/:id — actualizar datos del predio
+app.patch("/api/farms/:id", async (req, res) => {
+  const userId = getSessionUserId(req);
+  if (!userId) return res.status(401).json({ error: "No autenticado" });
+
+  const farmId = Number(req.params.id || 0);
+  if (!farmId || !(await assertFarmOwned(farmId, userId))) {
+    return res.status(403).json({ error: "Finca no válida" });
+  }
+
+  const {
+    name,
+    location,
+    area_ha,
+    heads_active,
+    breeds_text,
+    thermal_floor,
+    altitude_m,
+    production_model,
+  } = req.body || {};
+
+  const nextName = name != null ? String(name).trim() : null;
+  if (!nextName) return res.status(400).json({ error: "name es obligatorio" });
+
+  const nextLocation = location != null ? String(location).trim() : null;
+  const nextBreeds = breeds_text != null ? String(breeds_text).trim() : null;
+  const nextThermal = thermal_floor != null ? String(thermal_floor).trim() : null;
+  const nextModel = production_model != null ? String(production_model).trim() : null;
+  const nextArea = area_ha != null && area_ha !== "" ? Number(area_ha) : null;
+  const nextHeads = heads_active != null && heads_active !== "" ? Number(heads_active) : null;
+  const nextAlt = altitude_m != null && altitude_m !== "" ? Number(altitude_m) : null;
+
+  if (nextArea !== null && Number.isNaN(nextArea)) return res.status(400).json({ error: "area_ha inválida" });
+  if (nextHeads !== null && (Number.isNaN(nextHeads) || nextHeads < 0)) return res.status(400).json({ error: "heads_active inválido" });
+  if (nextAlt !== null && (Number.isNaN(nextAlt) || nextAlt < 0)) return res.status(400).json({ error: "altitude_m inválido" });
+
+  try {
+    const sql = `
+      UPDATE farms
+      SET
+        name = $1,
+        location = $2,
+        area_ha = $3,
+        heads_active = COALESCE($4, heads_active),
+        breeds_text = $5,
+        thermal_floor = $6,
+        altitude_m = $7,
+        production_model = $8
+      WHERE id = $9
+      RETURNING id, user_id, name, location, area_ha, heads_active, breeds_text, thermal_floor, altitude_m, production_model;
+    `;
+    const row = (await pool.query(sql, [nextName, nextLocation || null, nextArea, nextHeads, nextBreeds || null, nextThermal || null, nextAlt, nextModel || null, farmId])).rows[0];
+    res.json(row);
+  } catch (e) {
+    res.status(500).json({ error: "No se pudo actualizar la finca", detail: String(e.message || e) });
+  }
+});
+
 // GET /api/dashboard?farmId=1
 app.get("/api/dashboard", async (req, res) => {
-  const farmId = Number(req.query.farmId || 1);
+  const userId = getSessionUserId(req);
+  if (!userId) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+  const farmId = Number(req.query.farmId || 0);
+  if (!farmId || !(await assertFarmOwned(farmId, userId))) {
+    return res.status(403).json({ error: "Finca no válida" });
+  }
 
   const farmSql = `SELECT id, heads_active FROM farms WHERE id = $1;`;
   const farm = (await pool.query(farmSql, [farmId])).rows[0];
@@ -93,10 +365,8 @@ app.get("/api/dashboard", async (req, res) => {
   `;
   const tMonth = (await pool.query(monthSumSql, [farmId])).rows[0]?.t_month ?? 0;
 
-  // Demo: % reducción mes = min( (tMonth / 10) * 100, 50 )
   const reductionMonthPct = Math.min((Number(tMonth) / 10) * 100, 50);
 
-  // Bonos estimados (mes actual) = floor(tMonth)
   const bondsEstimated = Math.floor(Number(tMonth));
   const bondsEstimatedUsd = bondsEstimated * 40;
 
@@ -145,7 +415,14 @@ app.get("/api/dashboard", async (req, res) => {
 
 // GET /api/reports?farmId=1
 app.get("/api/reports", async (req, res) => {
-  const farmId = Number(req.query.farmId || 1);
+  const userId = getSessionUserId(req);
+  if (!userId) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+  const farmId = Number(req.query.farmId || 0);
+  if (!farmId || !(await assertFarmOwned(farmId, userId))) {
+    return res.status(403).json({ error: "Finca no válida" });
+  }
 
   const totalSql = `
     SELECT COALESCE(SUM(co2eq_reduced_t), 0)::numeric(10,2) AS co2eq_total_t
@@ -165,7 +442,6 @@ app.get("/api/reports", async (req, res) => {
   const bonos = Math.floor(Number(co2eqTotalT));
   const valorEstimadoUsd = bonos * 40;
 
-  // Para la demo usamos el total como "bonos verificados" e "ingresos acumulados"
   res.json({
     farmId,
     co2eqReducedT: Number(co2eqTotalT),
@@ -178,7 +454,14 @@ app.get("/api/reports", async (req, res) => {
 
 // GET /api/sensors?farmId=1
 app.get("/api/sensors", async (req, res) => {
-  const farmId = Number(req.query.farmId || 1);
+  const userId = getSessionUserId(req);
+  if (!userId) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+  const farmId = Number(req.query.farmId || 0);
+  if (!farmId || !(await assertFarmOwned(farmId, userId))) {
+    return res.status(403).json({ error: "Finca no válida" });
+  }
 
   const sql = `
     SELECT
@@ -203,7 +486,15 @@ app.get("/api/sensors", async (req, res) => {
 
 // POST /api/sensors
 app.post("/api/sensors", async (req, res) => {
-  const { farm_id = 1, code, zone, status = "activo", battery_pct = 100 } = req.body || {};
+  const userId = getSessionUserId(req);
+  if (!userId) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+  const { farm_id, code, zone, status = "activo", battery_pct = 100 } = req.body || {};
+  const farmId = Number(farm_id || 0);
+  if (!farmId || !(await assertFarmOwned(farmId, userId))) {
+    return res.status(403).json({ error: "Finca no válida" });
+  }
 
   if (!code || !zone) {
     return res.status(400).json({ error: "code y zone son obligatorios" });
@@ -215,13 +506,20 @@ app.post("/api/sensors", async (req, res) => {
     RETURNING *;
   `;
 
-  const { rows } = await pool.query(sql, [farm_id, code, zone, status, battery_pct]);
+  const { rows } = await pool.query(sql, [farmId, code, zone, status, battery_pct]);
   res.status(201).json(rows[0]);
 });
 
 // GET /api/recommendations?farmId=1
 app.get("/api/recommendations", async (req, res) => {
-  const farmId = Number(req.query.farmId || 1);
+  const userId = getSessionUserId(req);
+  if (!userId) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+  const farmId = Number(req.query.farmId || 0);
+  if (!farmId || !(await assertFarmOwned(farmId, userId))) {
+    return res.status(403).json({ error: "Finca no válida" });
+  }
 
   const sql = `
     SELECT
@@ -246,13 +544,22 @@ app.get("/api/recommendations", async (req, res) => {
 
 // POST /api/recommendations
 app.post("/api/recommendations", async (req, res) => {
+  const userId = getSessionUserId(req);
+  if (!userId) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
   const {
-    farm_id = 1,
+    farm_id,
     title,
     expected_reduction_pct = null,
     difficulty = "media",
     notes = null,
   } = req.body || {};
+
+  const farmId = Number(farm_id || 0);
+  if (!farmId || !(await assertFarmOwned(farmId, userId))) {
+    return res.status(403).json({ error: "Finca no válida" });
+  }
 
   if (!title) {
     return res.status(400).json({ error: "title es obligatorio" });
@@ -274,7 +581,7 @@ app.post("/api/recommendations", async (req, res) => {
       VALUES ($1, $2, 'pendiente')
       RETURNING *;
     `;
-    const farmRec = (await client.query(insFarmRec, [farm_id, rec.id])).rows[0];
+    const farmRec = (await client.query(insFarmRec, [farmId, rec.id])).rows[0];
 
     await client.query("COMMIT");
     res.status(201).json({ ...farmRec, recommendation: rec });
@@ -289,4 +596,3 @@ app.post("/api/recommendations", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Backend listo en http://localhost:${PORT}`);
 });
-

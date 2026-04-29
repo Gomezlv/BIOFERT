@@ -12,12 +12,13 @@ DROP TABLE IF EXISTS users;
 
 -- Usuario (dueño de una o más fincas)
 CREATE TABLE users (
-  id           SERIAL PRIMARY KEY,
-  full_name    TEXT NOT NULL,
-  role         TEXT NOT NULL DEFAULT 'Ganadero',
-  location     TEXT,
-  email        TEXT UNIQUE,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  id             SERIAL PRIMARY KEY,
+  full_name      TEXT NOT NULL,
+  role           TEXT NOT NULL DEFAULT 'Ganadero',
+  location       TEXT,
+  email          TEXT UNIQUE,
+  password_hash  TEXT NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE farms (
@@ -27,6 +28,10 @@ CREATE TABLE farms (
   location      TEXT,
   area_ha       NUMERIC(10,2),
   heads_active  INT NOT NULL DEFAULT 0 CHECK (heads_active >= 0),
+  breeds_text   TEXT,
+  thermal_floor TEXT,
+  altitude_m    INT,
+  production_model TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -93,13 +98,20 @@ CREATE TABLE co2eq_reduction_monthly (
 -- Seed data (alineado con el HTML + nuevas reglas)
 -- ─────────────────────────────────────────────────────────────
 
-INSERT INTO users (full_name, role, location, email)
-VALUES ('Carlos Hernández Muñoz', 'Ganadero', 'Córdoba, Colombia', 'carlos@example.com');
+-- Contraseña de demo: demo123 (scrypt, formato salt:hash hex)
+INSERT INTO users (full_name, role, location, email, password_hash)
+VALUES (
+  'Carlos Hernández Muñoz',
+  'Ganadero',
+  'Córdoba, Colombia',
+  'carlos@example.com',
+  '7f2c7a433f8a2d88ceade978b6aadc8a:32b8e6d76be66e4d6801462aeecf0717d7c22ae19fcc4d509e9cd2e2be134cd3821bb399253c5e6ae06aa14e2309bf4eb78051232e9822e1e158bf46442e2e2c'
+);
 
-INSERT INTO farms (user_id, name, location, area_ha, heads_active)
+INSERT INTO farms (user_id, name, location, area_ha, heads_active, breeds_text, thermal_floor, altitude_m, production_model)
 VALUES
-  (1, 'Finca El Porvenir', 'Córdoba, Colombia', 320, 280),
-  (1, 'Finca La Esperanza', 'Córdoba, Colombia', 120, 95);
+  (1, 'Finca El Porvenir', 'Córdoba, Colombia', 320, 280, 'Brahman 60% · Angus 40%', 'Cálido', 80, 'Doble propósito'),
+  (1, 'Finca La Esperanza', 'Córdoba, Colombia', 120, 95, 'Cebú 70% · Criollo 30%', 'Cálido', 95, 'Cría / Levante');
 
 INSERT INTO sensors (farm_id, code, zone, status, battery_pct)
 VALUES
