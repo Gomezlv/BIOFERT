@@ -67,14 +67,33 @@ async function assertFarmOwned(farmId, userId) {
   return rows.length > 0;
 }
 
+/** @returns {Promise<{ userId: number, isAdmin: boolean } | null>} */
+async function authContext(req) {
+  const userId = getSessionUserId(req);
+  if (!userId) return null;
+  const row = (await pool.query(`SELECT id, account_type FROM users WHERE id = $1 LIMIT 1`, [userId])).rows[0];
+  if (!row) return null;
+  const isAdmin = String(row.account_type || "").toLowerCase() === "admin";
+  return { userId: row.id, isAdmin };
+}
+
+async function assertFarmAccess(farmId, ctx) {
+  if (!farmId || !ctx) return false;
+  if (ctx.isAdmin) {
+    const { rows } = await pool.query(`SELECT id FROM farms WHERE id = $1 LIMIT 1`, [farmId]);
+    return rows.length > 0;
+  }
+  return assertFarmOwned(farmId, ctx.userId);
+}
+
 app.get("/api/health", async (_req, res) => {
   res.json({ ok: true });
 });
 
 // GET /api/config (solo autenticado) — configuración cliente (ej. Google Maps)
 app.get("/api/config", async (req, res) => {
-  const userId = getSessionUserId(req);
-  if (!userId) {
+  const ctx = await authContext(req);
+  if (!ctx) {
     return res.status(401).json({ error: "No autenticado" });
   }
   res.json({
@@ -96,9 +115,9 @@ app.post("/api/auth/register", async (req, res) => {
   try {
     await client.query("BEGIN");
     const insUser = `
-      INSERT INTO users (full_name, role, location, email, password_hash)
-      VALUES ($1, 'Ganadero', $2, $3, $4)
-      RETURNING id, full_name, role, location, email;
+      INSERT INTO users (full_name, role, account_type, location, email, password_hash)
+      VALUES ($1, 'Ganadero', 'ganadero', $2, $3, $4)
+      RETURNING id, full_name, role, account_type, location, email;
     `;
     let userRow;
     try {
@@ -136,10 +155,19 @@ app.post("/api/auth/login", async (req, res) => {
   if (!email || !password) {
     return res.status(400).json({ error: "email y password son obligatorios" });
   }
-  const sql = `SELECT id, full_name, role, location, email, password_hash FROM users WHERE lower(email) = lower($1) LIMIT 1;`;
+  const sql = `SELECT id, full_name, role, account_type, location, email, password_hash FROM users WHERE lower(email) = lower($1) LIMIT 1;`;
   const row = (await pool.query(sql, [String(email).trim()])).rows[0];
   if (!row || !verifyPassword(password, row.password_hash)) {
     return res.status(401).json({ error: "Credenciales incorrectas" });
+  }
+  try {
+    await pool.query(`INSERT INTO audit_log (user_id, action, meta) VALUES ($1, $2, $3)`, [
+      row.id,
+      "login",
+      JSON.stringify({ email: row.email }),
+    ]);
+  } catch {
+    /* tabla audit_log opcional en instalaciones antiguas */
   }
   const token = createSession(row.id);
   const { password_hash: _p, ...user } = row;
@@ -158,7 +186,7 @@ app.get("/api/profile", async (req, res) => {
   if (!userId) {
     return res.status(401).json({ error: "No autenticado" });
   }
-  const userSql = `SELECT id, full_name, role, location, email, created_at FROM users WHERE id = $1 LIMIT 1;`;
+  const userSql = `SELECT id, full_name, role, account_type, location, email, created_at FROM users WHERE id = $1 LIMIT 1;`;
   const user = (await pool.query(userSql, [userId])).rows[0] || null;
   res.json({ user });
 });
@@ -204,7 +232,7 @@ app.patch("/api/profile", async (req, res) => {
     return res.status(500).json({ error: "No se pudo actualizar", detail: String(e.message || e) });
   }
 
-  const user = (await pool.query(`SELECT id, full_name, role, location, email FROM users WHERE id = $1`, [userId])).rows[0];
+  const user = (await pool.query(`SELECT id, full_name, role, account_type, location, email FROM users WHERE id = $1`, [userId])).rows[0];
   res.json({ user });
 });
 
@@ -214,7 +242,7 @@ app.patch("/api/profile/details", async (req, res) => {
   if (!userId) {
     return res.status(401).json({ error: "No autenticado" });
   }
-  const { full_name, role, location } = req.body || {};
+  const { full_name, role, location, account_type: _ignoreAccount } = req.body || {};
   const name = full_name != null ? String(full_name).trim() : null;
   const r = role != null ? String(role).trim() : null;
   const loc = location != null ? String(location).trim() : null;
@@ -224,7 +252,7 @@ app.patch("/api/profile/details", async (req, res) => {
 
   try {
     await pool.query(`UPDATE users SET full_name = $1, role = $2, location = $3 WHERE id = $4`, [name, r, loc || null, userId]);
-    const user = (await pool.query(`SELECT id, full_name, role, location, email, created_at FROM users WHERE id = $1`, [userId])).rows[0];
+    const user = (await pool.query(`SELECT id, full_name, role, account_type, location, email, created_at FROM users WHERE id = $1`, [userId])).rows[0];
     res.json({ user });
   } catch (e) {
     res.status(500).json({ error: "No se pudo actualizar el perfil", detail: String(e.message || e) });
@@ -238,7 +266,7 @@ app.get("/api/farms", async (req, res) => {
     return res.status(401).json({ error: "No autenticado" });
   }
   const sql = `
-    SELECT id, user_id, name, location, area_ha, heads_active, breeds_text, thermal_floor, altitude_m, production_model
+    SELECT id, user_id, name, location, area_ha, heads_active, breeds_text, thermal_floor, altitude_m, production_model, certification_step
     FROM farms
     WHERE user_id = $1
     ORDER BY id ASC;
@@ -249,11 +277,11 @@ app.get("/api/farms", async (req, res) => {
 
 // PATCH /api/farms/:id — actualizar datos del predio
 app.patch("/api/farms/:id", async (req, res) => {
-  const userId = getSessionUserId(req);
-  if (!userId) return res.status(401).json({ error: "No autenticado" });
+  const ctx = await authContext(req);
+  if (!ctx) return res.status(401).json({ error: "No autenticado" });
 
   const farmId = Number(req.params.id || 0);
-  if (!farmId || !(await assertFarmOwned(farmId, userId))) {
+  if (!farmId || !(await assertFarmAccess(farmId, ctx))) {
     return res.status(403).json({ error: "Finca no válida" });
   }
 
@@ -296,7 +324,7 @@ app.patch("/api/farms/:id", async (req, res) => {
         altitude_m = $7,
         production_model = $8
       WHERE id = $9
-      RETURNING id, user_id, name, location, area_ha, heads_active, breeds_text, thermal_floor, altitude_m, production_model;
+      RETURNING id, user_id, name, location, area_ha, heads_active, breeds_text, thermal_floor, altitude_m, production_model, certification_step;
     `;
     const row = (await pool.query(sql, [nextName, nextLocation || null, nextArea, nextHeads, nextBreeds || null, nextThermal || null, nextAlt, nextModel || null, farmId])).rows[0];
     res.json(row);
@@ -307,12 +335,12 @@ app.patch("/api/farms/:id", async (req, res) => {
 
 // GET /api/dashboard?farmId=1
 app.get("/api/dashboard", async (req, res) => {
-  const userId = getSessionUserId(req);
-  if (!userId) {
+  const ctx = await authContext(req);
+  if (!ctx) {
     return res.status(401).json({ error: "No autenticado" });
   }
   const farmId = Number(req.query.farmId || 0);
-  if (!farmId || !(await assertFarmOwned(farmId, userId))) {
+  if (!farmId || !(await assertFarmAccess(farmId, ctx))) {
     return res.status(403).json({ error: "Finca no válida" });
   }
 
@@ -415,12 +443,12 @@ app.get("/api/dashboard", async (req, res) => {
 
 // GET /api/reports?farmId=1
 app.get("/api/reports", async (req, res) => {
-  const userId = getSessionUserId(req);
-  if (!userId) {
+  const ctx = await authContext(req);
+  if (!ctx) {
     return res.status(401).json({ error: "No autenticado" });
   }
   const farmId = Number(req.query.farmId || 0);
-  if (!farmId || !(await assertFarmOwned(farmId, userId))) {
+  if (!farmId || !(await assertFarmAccess(farmId, ctx))) {
     return res.status(403).json({ error: "Finca no válida" });
   }
 
@@ -454,12 +482,12 @@ app.get("/api/reports", async (req, res) => {
 
 // GET /api/sensors?farmId=1
 app.get("/api/sensors", async (req, res) => {
-  const userId = getSessionUserId(req);
-  if (!userId) {
+  const ctx = await authContext(req);
+  if (!ctx) {
     return res.status(401).json({ error: "No autenticado" });
   }
   const farmId = Number(req.query.farmId || 0);
-  if (!farmId || !(await assertFarmOwned(farmId, userId))) {
+  if (!farmId || !(await assertFarmAccess(farmId, ctx))) {
     return res.status(403).json({ error: "Finca no válida" });
   }
 
@@ -486,13 +514,13 @@ app.get("/api/sensors", async (req, res) => {
 
 // POST /api/sensors
 app.post("/api/sensors", async (req, res) => {
-  const userId = getSessionUserId(req);
-  if (!userId) {
+  const ctx = await authContext(req);
+  if (!ctx) {
     return res.status(401).json({ error: "No autenticado" });
   }
   const { farm_id, code, zone, status = "activo", battery_pct = 100 } = req.body || {};
   const farmId = Number(farm_id || 0);
-  if (!farmId || !(await assertFarmOwned(farmId, userId))) {
+  if (!farmId || !(await assertFarmAccess(farmId, ctx))) {
     return res.status(403).json({ error: "Finca no válida" });
   }
 
@@ -512,12 +540,12 @@ app.post("/api/sensors", async (req, res) => {
 
 // GET /api/recommendations?farmId=1
 app.get("/api/recommendations", async (req, res) => {
-  const userId = getSessionUserId(req);
-  if (!userId) {
+  const ctx = await authContext(req);
+  if (!ctx) {
     return res.status(401).json({ error: "No autenticado" });
   }
   const farmId = Number(req.query.farmId || 0);
-  if (!farmId || !(await assertFarmOwned(farmId, userId))) {
+  if (!farmId || !(await assertFarmAccess(farmId, ctx))) {
     return res.status(403).json({ error: "Finca no válida" });
   }
 
@@ -544,8 +572,8 @@ app.get("/api/recommendations", async (req, res) => {
 
 // POST /api/recommendations
 app.post("/api/recommendations", async (req, res) => {
-  const userId = getSessionUserId(req);
-  if (!userId) {
+  const ctx = await authContext(req);
+  if (!ctx) {
     return res.status(401).json({ error: "No autenticado" });
   }
   const {
@@ -557,7 +585,7 @@ app.post("/api/recommendations", async (req, res) => {
   } = req.body || {};
 
   const farmId = Number(farm_id || 0);
-  if (!farmId || !(await assertFarmOwned(farmId, userId))) {
+  if (!farmId || !(await assertFarmAccess(farmId, ctx))) {
     return res.status(403).json({ error: "Finca no válida" });
   }
 
@@ -591,6 +619,330 @@ app.post("/api/recommendations", async (req, res) => {
   } finally {
     client.release();
   }
+});
+
+function maskApiKey(key) {
+  const s = key != null ? String(key) : "";
+  if (!s) return null;
+  if (s.length <= 10) return "••••";
+  return `${s.slice(0, 6)}…${s.slice(-4)}`;
+}
+
+// ─── Rutas administración (solo account_type = admin) ───
+
+app.get("/api/admin/overview", async (req, res) => {
+  const ctx = await authContext(req);
+  if (!ctx) return res.status(401).json({ error: "No autenticado" });
+  if (!ctx.isAdmin) return res.status(403).json({ error: "Solo administradores" });
+  try {
+    const q = `
+      SELECT
+        (SELECT COUNT(*)::int FROM users) AS user_count,
+        (SELECT COUNT(*)::int FROM users WHERE account_type = 'ganadero') AS ganadero_count,
+        (SELECT COUNT(*)::int FROM users WHERE account_type = 'admin') AS admin_count,
+        (SELECT COUNT(*)::int FROM farms) AS farm_count,
+        (SELECT COUNT(*)::int FROM sensors) AS sensor_count,
+        (SELECT COUNT(*)::int FROM sensors WHERE status = 'alerta') AS sensors_alerta,
+        (SELECT COUNT(*)::int FROM farm_recommendations WHERE status = 'pendiente') AS recs_pendientes;
+    `;
+    const row = (await pool.query(q)).rows[0];
+    res.json(row);
+  } catch (e) {
+    res.status(500).json({ error: "No se pudo cargar el resumen", detail: String(e.message || e) });
+  }
+});
+
+app.get("/api/admin/users", async (req, res) => {
+  const ctx = await authContext(req);
+  if (!ctx) return res.status(401).json({ error: "No autenticado" });
+  if (!ctx.isAdmin) return res.status(403).json({ error: "Solo administradores" });
+  const sql = `
+    SELECT u.id, u.full_name, u.role, u.account_type, u.email, u.location, u.created_at,
+      (SELECT COUNT(*)::int FROM farms f WHERE f.user_id = u.id) AS farm_count
+    FROM users u
+    ORDER BY u.id ASC;
+  `;
+  const { rows } = await pool.query(sql);
+  res.json(rows);
+});
+
+app.get("/api/admin/farms", async (req, res) => {
+  const ctx = await authContext(req);
+  if (!ctx) return res.status(401).json({ error: "No autenticado" });
+  if (!ctx.isAdmin) return res.status(403).json({ error: "Solo administradores" });
+  const sql = `
+    SELECT f.id, f.user_id, f.name, f.location, f.area_ha, f.heads_active,
+      f.breeds_text, f.thermal_floor, f.altitude_m, f.production_model, f.certification_step, f.created_at,
+      u.email AS owner_email, u.full_name AS owner_name
+    FROM farms f
+    JOIN users u ON u.id = f.user_id
+    ORDER BY f.id ASC;
+  `;
+  const { rows } = await pool.query(sql);
+  res.json(rows);
+});
+
+app.get("/api/admin/users/:userId/farms", async (req, res) => {
+  const ctx = await authContext(req);
+  if (!ctx) return res.status(401).json({ error: "No autenticado" });
+  if (!ctx.isAdmin) return res.status(403).json({ error: "Solo administradores" });
+  const userId = Number(req.params.userId || 0);
+  if (!userId) return res.status(400).json({ error: "Usuario inválido" });
+  const sql = `
+    SELECT id, user_id, name, location, area_ha, heads_active, breeds_text, thermal_floor, altitude_m, production_model, certification_step
+    FROM farms
+    WHERE user_id = $1
+    ORDER BY id ASC;
+  `;
+  const { rows } = await pool.query(sql, [userId]);
+  res.json(rows);
+});
+
+app.get("/api/admin/users/:userId/impact", async (req, res) => {
+  const ctx = await authContext(req);
+  if (!ctx) return res.status(401).json({ error: "No autenticado" });
+  if (!ctx.isAdmin) return res.status(403).json({ error: "Solo administradores" });
+  const userId = Number(req.params.userId || 0);
+  if (!userId) return res.status(400).json({ error: "Usuario inválido" });
+  const monthlySql = `
+    SELECT m.month::text AS month, SUM(m.co2eq_reduced_t)::numeric(12,2) AS co2eq_reduced_t
+    FROM co2eq_reduction_monthly m
+    JOIN farms f ON f.id = m.farm_id
+    WHERE f.user_id = $1
+    GROUP BY m.month
+    ORDER BY m.month ASC;
+  `;
+  const { rows: months } = await pool.query(monthlySql, [userId]);
+  const totalCo2 = months.reduce((a, r) => a + Number(r.co2eq_reduced_t || 0), 0);
+  const bonds = Math.floor(totalCo2);
+  res.json({
+    user_id: userId,
+    co2eq_by_month: months.map(r => ({
+      month: r.month,
+      co2eq_reduced_t: Number(r.co2eq_reduced_t),
+      ch4_eq_reduced_kg: Number((Number(r.co2eq_reduced_t) * 28).toFixed(2)),
+    })),
+    totals: {
+      co2eq_reduced_t: totalCo2,
+      bonds_count: bonds,
+      value_estimated_usd: bonds * 40,
+    },
+  });
+});
+
+app.get("/api/admin/users/:userId/audit-log", async (req, res) => {
+  const ctx = await authContext(req);
+  if (!ctx) return res.status(401).json({ error: "No autenticado" });
+  if (!ctx.isAdmin) return res.status(403).json({ error: "Solo administradores" });
+  const userId = Number(req.params.userId || 0);
+  if (!userId) return res.status(400).json({ error: "Usuario inválido" });
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, action, meta, created_at FROM audit_log WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`,
+      [userId]
+    );
+    res.json(rows);
+  } catch {
+    res.json([]);
+  }
+});
+
+app.patch("/api/admin/users/:userId", async (req, res) => {
+  const ctx = await authContext(req);
+  if (!ctx) return res.status(401).json({ error: "No autenticado" });
+  if (!ctx.isAdmin) return res.status(403).json({ error: "Solo administradores" });
+  const targetId = Number(req.params.userId || 0);
+  if (!targetId) return res.status(400).json({ error: "Usuario inválido" });
+  const { full_name, role, location, email, account_type, new_password } = req.body || {};
+  const urow = (await pool.query(`SELECT id, account_type FROM users WHERE id = $1`, [targetId])).rows[0];
+  if (!urow) return res.status(404).json({ error: "Usuario no encontrado" });
+
+  const nextName = full_name != null ? String(full_name).trim() : null;
+  const nextRole = role != null ? String(role).trim() : null;
+  const nextLoc = location !== undefined ? (location != null && String(location).trim() ? String(location).trim() : null) : undefined;
+  const nextEmail = email != null ? String(email).trim().toLowerCase() : null;
+  const nextType = account_type != null ? String(account_type).toLowerCase() : null;
+  const pwd = new_password != null ? String(new_password) : null;
+
+  if (pwd && pwd.length < 6) return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
+  if (nextType && nextType !== "admin" && nextType !== "ganadero") {
+    return res.status(400).json({ error: "account_type inválido" });
+  }
+  if (nextType === "ganadero" && urow.account_type === "admin") {
+    const { rows: ac } = await pool.query(`SELECT COUNT(*)::int AS c FROM users WHERE account_type = 'admin'`);
+    if (Number(ac[0]?.c) <= 1) {
+      return res.status(400).json({ error: "No se puede quitar el único administrador" });
+    }
+  }
+
+  try {
+    const sets = [];
+    const vals = [];
+    let i = 1;
+    if (nextName) {
+      sets.push(`full_name = $${i++}`);
+      vals.push(nextName);
+    }
+    if (nextRole) {
+      sets.push(`role = $${i++}`);
+      vals.push(nextRole);
+    }
+    if (nextLoc !== undefined) {
+      sets.push(`location = $${i++}`);
+      vals.push(nextLoc);
+    }
+    if (nextEmail) {
+      sets.push(`email = $${i++}`);
+      vals.push(nextEmail);
+    }
+    if (nextType) {
+      sets.push(`account_type = $${i++}`);
+      vals.push(nextType);
+    }
+    if (pwd) {
+      sets.push(`password_hash = $${i++}`);
+      vals.push(hashPassword(pwd));
+    }
+    if (sets.length === 0) return res.status(400).json({ error: "Sin cambios" });
+    vals.push(targetId);
+    await pool.query(`UPDATE users SET ${sets.join(", ")} WHERE id = $${i}`, vals);
+    const user = (await pool.query(`SELECT id, full_name, role, account_type, location, email, created_at FROM users WHERE id = $1`, [targetId])).rows[0];
+    res.json({ user });
+  } catch (e) {
+    if (e && e.code === "23505") return res.status(409).json({ error: "El email ya está en uso" });
+    res.status(500).json({ error: "No se pudo actualizar", detail: String(e.message || e) });
+  }
+});
+
+app.delete("/api/admin/users/:userId", async (req, res) => {
+  const ctx = await authContext(req);
+  if (!ctx) return res.status(401).json({ error: "No autenticado" });
+  if (!ctx.isAdmin) return res.status(403).json({ error: "Solo administradores" });
+  const targetId = Number(req.params.userId || 0);
+  if (!targetId) return res.status(400).json({ error: "Usuario inválido" });
+  if (targetId === ctx.userId) return res.status(400).json({ error: "No puedes eliminar tu propia cuenta" });
+  const urow = (await pool.query(`SELECT account_type FROM users WHERE id = $1`, [targetId])).rows[0];
+  if (!urow) return res.status(404).json({ error: "Usuario no encontrado" });
+  if (urow.account_type === "admin") {
+    const { rows: ac } = await pool.query(`SELECT COUNT(*)::int AS c FROM users WHERE account_type = 'admin'`);
+    if (Number(ac[0]?.c) <= 1) return res.status(400).json({ error: "No se puede eliminar el único administrador" });
+  }
+  await pool.query(`DELETE FROM users WHERE id = $1`, [targetId]);
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/sensors", async (req, res) => {
+  const ctx = await authContext(req);
+  if (!ctx) return res.status(401).json({ error: "No autenticado" });
+  if (!ctx.isAdmin) return res.status(403).json({ error: "Solo administradores" });
+  const sql = `
+    SELECT
+      s.id, s.farm_id, s.code, s.zone, s.status, s.battery_pct, s.installed_at,
+      f.name AS farm_name,
+      u.id AS owner_user_id, u.email AS owner_email,
+      r.ch4_ppm AS last_ch4_ppm,
+      r.recorded_at AS last_recorded_at
+    FROM sensors s
+    JOIN farms f ON f.id = s.farm_id
+    JOIN users u ON u.id = f.user_id
+    LEFT JOIN LATERAL (
+      SELECT ch4_ppm, recorded_at
+      FROM sensor_readings
+      WHERE sensor_id = s.id
+      ORDER BY recorded_at DESC
+      LIMIT 1
+    ) r ON true
+    ORDER BY s.id ASC;
+  `;
+  const { rows } = await pool.query(sql);
+  res.json(rows);
+});
+
+app.get("/api/admin/farm-recommendations", async (req, res) => {
+  const ctx = await authContext(req);
+  if (!ctx) return res.status(401).json({ error: "No autenticado" });
+  if (!ctx.isAdmin) return res.status(403).json({ error: "Solo administradores" });
+  const sql = `
+    SELECT
+      fr.id AS farm_rec_id,
+      fr.farm_id,
+      fr.status,
+      fr.created_at,
+      r.id AS recommendation_id,
+      r.title,
+      r.expected_reduction_pct,
+      r.difficulty,
+      r.notes,
+      f.name AS farm_name,
+      u.email AS owner_email
+    FROM farm_recommendations fr
+    JOIN recommendations r ON r.id = fr.recommendation_id
+    JOIN farms f ON f.id = fr.farm_id
+    JOIN users u ON u.id = f.user_id
+    ORDER BY fr.created_at DESC;
+  `;
+  const { rows } = await pool.query(sql);
+  res.json(rows);
+});
+
+app.get("/api/admin/reports-summary", async (req, res) => {
+  const ctx = await authContext(req);
+  if (!ctx) return res.status(401).json({ error: "No autenticado" });
+  if (!ctx.isAdmin) return res.status(403).json({ error: "Solo administradores" });
+  const sql = `
+    SELECT f.id AS farm_id, f.name AS farm_name, f.certification_step,
+      COALESCE(SUM(m.co2eq_reduced_t), 0)::numeric(12,2) AS co2eq_reduced_t
+    FROM farms f
+    LEFT JOIN co2eq_reduction_monthly m ON m.farm_id = f.id
+    GROUP BY f.id, f.name, f.certification_step
+    ORDER BY f.id ASC;
+  `;
+  const { rows } = await pool.query(sql);
+  const certLabels = ["Medición", "Análisis", "Reporte", "Auditoría externa", "Certificación", "Pago / monetización"];
+  const byFarm = rows.map(r => ({
+    farm_id: r.farm_id,
+    farm_name: r.farm_name,
+    certification_step: Number(r.certification_step || 1),
+    certification_label: certLabels[Math.min(Math.max(Number(r.certification_step || 1), 1), 6) - 1],
+    co2eq_reduced_t: Number(r.co2eq_reduced_t),
+    bonds_count: Math.floor(Number(r.co2eq_reduced_t)),
+    value_estimated_usd: Math.floor(Number(r.co2eq_reduced_t)) * 40,
+  }));
+  const totalCo2eq = byFarm.reduce((a, b) => a + b.co2eq_reduced_t, 0);
+  res.json({
+    total_co2eq_reduced_t: totalCo2eq,
+    total_bonds_usd: Math.floor(totalCo2eq) * 40,
+    byFarm,
+  });
+});
+
+app.get("/api/admin/audit", async (req, res) => {
+  const ctx = await authContext(req);
+  if (!ctx) return res.status(401).json({ error: "No autenticado" });
+  if (!ctx.isAdmin) return res.status(403).json({ error: "Solo administradores" });
+  try {
+    const { rows } = await pool.query(
+      `SELECT a.id, a.user_id, a.action, a.meta, a.created_at, u.email AS user_email
+       FROM audit_log a
+       LEFT JOIN users u ON u.id = a.user_id
+       ORDER BY a.id DESC
+       LIMIT 200`
+    );
+    res.json(rows);
+  } catch {
+    res.json([]);
+  }
+});
+
+app.get("/api/admin/config-summary", async (req, res) => {
+  const ctx = await authContext(req);
+  if (!ctx) return res.status(401).json({ error: "No autenticado" });
+  if (!ctx.isAdmin) return res.status(403).json({ error: "Solo administradores" });
+  res.json({
+    googleMapsApiKeyMasked: maskApiKey(process.env.GOOGLE_MAPS_API_KEY || ""),
+    port: PORT,
+    database: process.env.PGDATABASE || "metaganado",
+  });
 });
 
 app.listen(PORT, () => {

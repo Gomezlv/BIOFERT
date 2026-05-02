@@ -30,9 +30,22 @@ describe('App', () => {
       user: { id: 1, full_name: 'Carlos', role: 'Ganadero', location: 'Córdoba', email: 'carlos@example.com' },
     });
 
+    const cfgReq = httpMock.expectOne('http://localhost:3000/api/config');
+    cfgReq.flush({ googleMapsApiKey: null });
+
     const farmsReq = httpMock.expectOne(r => r.url === 'http://localhost:3000/api/farms');
     expect(farmsReq.request.headers.get('Authorization')).toBe('Bearer fake-token');
-    farmsReq.flush([{ id: 1, user_id: 1, name: 'Finca El Porvenir', location: 'Córdoba', area_ha: 320, heads_active: 280 }]);
+    farmsReq.flush([
+      {
+        id: 1,
+        user_id: 1,
+        name: 'Finca El Porvenir',
+        location: 'Córdoba',
+        area_ha: 320,
+        heads_active: 280,
+        certification_step: 2,
+      },
+    ]);
 
     httpMock.expectOne('http://localhost:3000/api/dashboard?farmId=1').flush({
       farmId: 1,
@@ -45,7 +58,14 @@ describe('App', () => {
       emissions24h: [],
     });
     httpMock.expectOne('http://localhost:3000/api/sensors?farmId=1').flush([]);
-    httpMock.expectOne('http://localhost:3000/api/recommendations?farmId=1').flush([]);
+    httpMock.expectOne('http://localhost:3000/api/reports?farmId=1').flush({
+      farmId: 1,
+      co2eqReducedT: 0,
+      bondsCount: 0,
+      valueEstimatedUsd: 0,
+      revenueAccumUsd: 0,
+      co2eqByMonth: [],
+    });
     httpMock.verify();
 
     const compiled = fixture.nativeElement as HTMLElement;

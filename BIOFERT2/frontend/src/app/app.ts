@@ -1,10 +1,26 @@
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { finalize } from 'rxjs';
+import { finalize, forkJoin } from 'rxjs';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
-import { ApiService, Farm, Profile, Reports, Sensor } from './api.service';
+import {
+  AdminConfigSummary,
+  AdminFarmRow,
+  AdminOverview,
+  AdminReportsSummary,
+  AdminSensorRow,
+  AdminUserAuditEntry,
+  AdminUserImpact,
+  AdminUserRow,
+  ApiService,
+  Farm,
+  Profile,
+  Reports,
+  Sensor,
+} from './api.service';
 import { AuthService } from './auth.service';
+
+type AdminTab = 'panel' | 'usuarios' | 'fincas' | 'sensores' | 'reportes' | 'config';
 
 type AiRecommendation = {
   id: string;
@@ -83,12 +99,47 @@ export class App implements OnInit {
     production_model: [''],
   });
 
-  protected readonly screen = signal<'inicio' | 'sensores' | 'recomendaciones' | 'reportes' | 'perfil'>('inicio');
+  protected readonly screen = signal<'inicio' | 'sensores' | 'reportes' | 'perfil'>('inicio');
+
+  protected readonly layoutMode = signal<'admin' | 'ganadero'>('ganadero');
+  protected readonly adminTab = signal<AdminTab>('panel');
+  protected readonly previewOwnerLabel = signal<string | null>(null);
+  protected readonly adminLoadError = signal<string | null>(null);
+  protected readonly adminOverview = signal<AdminOverview | null>(null);
+  protected readonly adminUsers = signal<AdminUserRow[]>([]);
+  protected readonly adminFarms = signal<AdminFarmRow[]>([]);
+  protected readonly adminSensors = signal<AdminSensorRow[]>([]);
+  protected readonly adminReports = signal<AdminReportsSummary | null>(null);
+  protected readonly adminConfig = signal<AdminConfigSummary | null>(null);
 
   protected readonly profile = signal<Profile | null>(null);
   protected readonly farms = signal<Farm[]>([]);
   protected readonly selectedFarmId = signal<number | null>(null);
   protected readonly pendingFarmId = signal<number | null>(null);
+
+  protected readonly expandedAdminUserId = signal<number | null>(null);
+  protected readonly adminUserImpact = signal<AdminUserImpact | null>(null);
+  protected readonly adminUserAuditDetail = signal<AdminUserAuditEntry[]>([]);
+  protected readonly adminUserDetailBusy = signal(false);
+
+  protected readonly expandedAdminFarmId = signal<number | null>(null);
+  protected readonly adminFarmReportsExtra = signal<Reports | null>(null);
+  protected readonly adminFarmDetailBusy = signal(false);
+
+  protected readonly showAdminUserEditor = signal(false);
+  protected readonly adminUserEditorId = signal<number | null>(null);
+  protected readonly adminUserEditorBusy = signal(false);
+  protected readonly adminUserEditorMessage = signal<string | null>(null);
+  protected readonly adminProfileEditorOnly = signal(false);
+
+  protected readonly adminUserEditForm = this.fb.nonNullable.group({
+    full_name: ['', Validators.required],
+    email: ['', [Validators.required, Validators.email]],
+    role: ['', Validators.required],
+    location: [''],
+    account_type: this.fb.nonNullable.control<'admin' | 'ganadero'>('ganadero'),
+    new_password: [''],
+  });
 
   protected readonly sensors = signal<Sensor[]>([]);
   protected readonly reports = signal<Reports | null>(null);
@@ -106,6 +157,65 @@ export class App implements OnInit {
   protected readonly sensorFilter = signal<'todos' | 'activo' | 'alerta' | 'inactivo'>('todos');
 
   protected readonly selectedFarm = computed(() => this.farms().find(f => f.id === this.selectedFarmId()) ?? null);
+
+  /** Panel admin: conteo de sensores por estado */
+  protected readonly adminPanelSensorCounts = computed(() => {
+    const s = this.adminSensors();
+    const activo = s.filter(x => x.status === 'activo').length;
+    const alerta = s.filter(x => x.status === 'alerta').length;
+    const inactivo = s.filter(x => x.status === 'inactivo').length;
+    const total = s.length;
+    return { activo, alerta, inactivo, total };
+  });
+
+  /** Sensores en alerta (prioridad para el panel) */
+  protected readonly adminPanelAlertSensors = computed(() =>
+    this.adminSensors().filter(x => x.status === 'alerta').slice(0, 14)
+  );
+
+  protected readonly adminPanelInactiveSensors = computed(() =>
+    this.adminSensors().filter(x => x.status === 'inactivo').slice(0, 8)
+  );
+
+  /** Top fincas por t CO₂eq acumulado (barra horizontal %) */
+  protected readonly adminPanelCo2eqByFarm = computed(() => {
+    const rows = [...(this.adminReports()?.byFarm ?? [])].sort((a, b) => b.co2eq_reduced_t - a.co2eq_reduced_t).slice(0, 10);
+    const max = Math.max(...rows.map(r => r.co2eq_reduced_t), 0.01);
+    return rows.map(r => ({
+      farm_id: r.farm_id,
+      name: r.farm_name.length > 22 ? `${r.farm_name.slice(0, 20)}…` : r.farm_name,
+      fullName: r.farm_name,
+      t: r.co2eq_reduced_t,
+      pct: Math.min(100, Math.round((r.co2eq_reduced_t / max) * 100)),
+    }));
+  });
+
+  /** Top fincas por cabezas */
+  protected readonly adminPanelHeadsByFarm = computed(() => {
+    const rows = [...this.adminFarms()].sort((a, b) => b.heads_active - a.heads_active).slice(0, 8);
+    const max = Math.max(...rows.map(r => r.heads_active), 1);
+    return rows.map(r => ({
+      id: r.id,
+      name: r.name.length > 20 ? `${r.name.slice(0, 18)}…` : r.name,
+      heads: r.heads_active,
+      pct: Math.min(100, Math.round((r.heads_active / max) * 100)),
+    }));
+  });
+
+  protected readonly adminPanelAccountMix = computed(() => {
+    const u = this.adminUsers();
+    const gan = u.filter(x => (x.account_type ?? 'ganadero') === 'ganadero').length;
+    const adm = u.filter(x => x.account_type === 'admin').length;
+    const total = Math.max(u.length, 1);
+    return {
+      gan,
+      adm,
+      ganPct: Math.round((gan / total) * 100),
+      admPct: Math.round((adm / total) * 100),
+    };
+  });
+
+  protected readonly isAdminUser = computed(() => (this.profile()?.user?.account_type ?? 'ganadero') === 'admin');
 
   protected readonly userInitials = computed(() => {
     const name = (this.profile()?.user?.full_name ?? '').trim();
@@ -372,22 +482,114 @@ export class App implements OnInit {
           next: cfg => this.googleMapsApiKey.set(cfg.googleMapsApiKey),
           error: () => this.googleMapsApiKey.set(null),
         });
-        this.api.listFarms().subscribe({
-          next: rows => {
-            this.farms.set(rows);
-            const cur = this.selectedFarmId();
-            if (rows.length === 0) {
-              this.selectedFarmId.set(null);
-            } else if (!cur || !rows.some(r => r.id === cur)) {
-              this.selectedFarmId.set(rows[0].id);
-            }
-            this.refreshAll();
-          },
-          error: () => this.failSession(),
-        });
+        const admin = (p.user?.account_type ?? 'ganadero') === 'admin';
+        if (admin) {
+          this.layoutMode.set('admin');
+          this.adminTab.set('panel');
+          this.previewOwnerLabel.set(null);
+          this.farms.set([]);
+          this.selectedFarmId.set(null);
+          this.dashboard.set(null);
+          this.sensors.set([]);
+          this.reports.set(null);
+          this.loadAdminData();
+        } else {
+          this.layoutMode.set('ganadero');
+          this.api.listFarms().subscribe({
+            next: rows => {
+              this.farms.set(rows);
+              const cur = this.selectedFarmId();
+              if (rows.length === 0) {
+                this.selectedFarmId.set(null);
+              } else if (!cur || !rows.some(r => r.id === cur)) {
+                this.selectedFarmId.set(rows[0].id);
+              }
+              this.refreshAll();
+            },
+            error: () => this.failSession(),
+          });
+        }
       },
       error: () => this.failSession(),
     });
+  }
+
+  protected loadAdminData(): void {
+    if (!this.isAdminUser()) return;
+    this.adminLoadError.set(null);
+    forkJoin({
+      overview: this.api.adminOverview(),
+      users: this.api.adminUsers(),
+      farms: this.api.adminFarms(),
+      sensors: this.api.adminSensors(),
+      reports: this.api.adminReportsSummary(),
+      config: this.api.adminConfigSummary(),
+    }).subscribe({
+      next: v => {
+        this.adminOverview.set(v.overview);
+        this.adminUsers.set(v.users);
+        this.adminFarms.set(v.farms);
+        this.adminSensors.set(v.sensors);
+        this.adminReports.set(v.reports);
+        this.adminConfig.set(v.config);
+      },
+      error: err => {
+        const msg = err?.error?.error ?? 'No se pudieron cargar los datos de administración';
+        this.adminLoadError.set(msg);
+      },
+    });
+  }
+
+  protected navigateAdmin(tab: AdminTab): void {
+    this.adminTab.set(tab);
+  }
+
+  protected openFarmAsOperator(row: AdminFarmRow): void {
+    const owner = [row.owner_name, row.owner_email].filter(Boolean).join(' · ');
+    this.api.adminUserFarms(row.user_id).subscribe({
+      next: rows => {
+        this.farms.set(rows);
+        this.selectedFarmId.set(row.id);
+        this.layoutMode.set('ganadero');
+        this.previewOwnerLabel.set(owner || null);
+        this.refreshAll();
+        this.navigate('inicio');
+      },
+      error: () => {
+        const farm: Farm = {
+          id: row.id,
+          user_id: row.user_id,
+          name: row.name,
+          location: row.location,
+          area_ha: row.area_ha,
+          heads_active: row.heads_active,
+          breeds_text: row.breeds_text,
+          thermal_floor: row.thermal_floor,
+          altitude_m: row.altitude_m,
+          production_model: row.production_model,
+          certification_step: row.certification_step,
+        };
+        this.farms.set([farm]);
+        this.selectedFarmId.set(farm.id);
+        this.layoutMode.set('ganadero');
+        this.previewOwnerLabel.set(owner || null);
+        this.refreshAll();
+        this.navigate('inicio');
+      },
+    });
+  }
+
+  protected backToAdminPanel(): void {
+    this.layoutMode.set('admin');
+    this.previewOwnerLabel.set(null);
+    this.farms.set([]);
+    this.selectedFarmId.set(null);
+    this.pendingFarmId.set(null);
+    this.dashboard.set(null);
+    this.sensors.set([]);
+    this.reports.set(null);
+    this.screen.set('inicio');
+    this.loadAdminData();
   }
 
   private failSession(): void {
@@ -400,6 +602,9 @@ export class App implements OnInit {
     this.dashboard.set(null);
     this.sensors.set([]);
     this.reports.set(null);
+    this.layoutMode.set('ganadero');
+    this.previewOwnerLabel.set(null);
+    this.adminLoadError.set(null);
   }
 
   protected setAuthTab(tab: 'login' | 'register'): void {
@@ -477,6 +682,15 @@ export class App implements OnInit {
     this.sensors.set([]);
     this.reports.set(null);
     this.screen.set('inicio');
+    this.layoutMode.set('ganadero');
+    this.previewOwnerLabel.set(null);
+    this.adminLoadError.set(null);
+    this.adminOverview.set(null);
+    this.adminUsers.set([]);
+    this.adminFarms.set([]);
+    this.adminSensors.set([]);
+    this.adminReports.set(null);
+    this.adminConfig.set(null);
     this.loginForm.reset();
     this.registerForm.reset();
   }
@@ -540,8 +754,14 @@ export class App implements OnInit {
   protected openProfileEditor(): void {
     const u = this.profile()?.user;
     const f = this.selectedFarm();
-    if (!u || !f) return;
+    if (!u) return;
+    if (this.layoutMode() === 'admin') {
+      this.openAdminProfileEditor();
+      return;
+    }
+    if (!f) return;
 
+    this.adminProfileEditorOnly.set(false);
     this.profileEditMessage.set(null);
     this.profileEditForm.patchValue({
       full_name: u.full_name ?? '',
@@ -562,6 +782,7 @@ export class App implements OnInit {
   protected closeProfileEditor(): void {
     this.showProfileEditor.set(false);
     this.profileEditMessage.set(null);
+    this.adminProfileEditorOnly.set(false);
   }
 
   protected submitProfileEdit(): void {
@@ -569,12 +790,37 @@ export class App implements OnInit {
       this.profileEditForm.markAllAsTouched();
       return;
     }
-    const farm = this.selectedFarm();
-    if (!farm) return;
-
     const v = this.profileEditForm.getRawValue();
     this.profileEditBusy.set(true);
     this.profileEditMessage.set(null);
+
+    if (this.adminProfileEditorOnly()) {
+      this.api
+        .updateProfileDetails({
+          full_name: v.full_name.trim(),
+          role: v.role.trim(),
+          location: v.user_location.trim() || null,
+        })
+        .subscribe({
+          next: p => {
+            this.profile.set(p);
+            this.profileEditBusy.set(false);
+            this.profileEditMessage.set({ type: 'ok', text: 'Perfil actualizado correctamente.' });
+          },
+          error: err => {
+            this.profileEditBusy.set(false);
+            const msg = err?.error?.error ?? 'No se pudo actualizar el perfil';
+            this.profileEditMessage.set({ type: 'err', text: msg });
+          },
+        });
+      return;
+    }
+
+    const farm = this.selectedFarm();
+    if (!farm) {
+      this.profileEditBusy.set(false);
+      return;
+    }
 
     this.api
       .updateProfileDetails({
@@ -618,8 +864,192 @@ export class App implements OnInit {
       });
   }
 
-  protected navigate(id: 'inicio' | 'sensores' | 'recomendaciones' | 'reportes' | 'perfil') {
+  protected navigate(id: 'inicio' | 'sensores' | 'reportes' | 'perfil') {
     this.screen.set(id);
+  }
+
+  protected selectFarm(farmId: number): void {
+    if (!this.farms().some(f => f.id === farmId)) return;
+    this.selectedFarmId.set(farmId);
+    this.refreshAll();
+  }
+
+  protected toggleAdminUserRow(userId: number): void {
+    if (this.expandedAdminUserId() === userId) {
+      this.expandedAdminUserId.set(null);
+      this.adminUserImpact.set(null);
+      this.adminUserAuditDetail.set([]);
+      return;
+    }
+    this.expandedAdminUserId.set(userId);
+    this.adminUserDetailBusy.set(true);
+    this.adminUserImpact.set(null);
+    this.adminUserAuditDetail.set([]);
+    forkJoin({
+      impact: this.api.adminUserImpact(userId),
+      audit: this.api.adminUserAuditLog(userId),
+    }).subscribe({
+      next: v => {
+        this.adminUserImpact.set(v.impact);
+        this.adminUserAuditDetail.set(v.audit);
+        this.adminUserDetailBusy.set(false);
+      },
+      error: () => {
+        this.adminUserDetailBusy.set(false);
+        this.adminUserImpact.set(null);
+        this.adminUserAuditDetail.set([]);
+      },
+    });
+  }
+
+  protected toggleAdminFarmRow(farmId: number): void {
+    if (this.expandedAdminFarmId() === farmId) {
+      this.expandedAdminFarmId.set(null);
+      this.adminFarmReportsExtra.set(null);
+      return;
+    }
+    this.expandedAdminFarmId.set(farmId);
+    this.adminFarmDetailBusy.set(true);
+    this.adminFarmReportsExtra.set(null);
+    this.api.reports(farmId).subscribe({
+      next: r => {
+        this.adminFarmReportsExtra.set(r);
+        this.adminFarmDetailBusy.set(false);
+      },
+      error: () => {
+        this.adminFarmDetailBusy.set(false);
+        this.adminFarmReportsExtra.set(null);
+      },
+    });
+  }
+
+  protected co2eqBarsFromSeries(series: { month: string; co2eq_reduced_t: number }[]) {
+    const values = series.map(s => s.co2eq_reduced_t);
+    const max = Math.max(...values, 0.001);
+    return series.map(s => ({
+      month: new Date(String(s.month)).toLocaleDateString('es-CO', { month: 'short' }),
+      value: s.co2eq_reduced_t,
+      h: Math.round((s.co2eq_reduced_t / max) * 110),
+    }));
+  }
+
+  protected ch4EqBarsFromImpact(series: { month: string; ch4_eq_reduced_kg: number }[]) {
+    const values = series.map(s => s.ch4_eq_reduced_kg);
+    const max = Math.max(...values, 0.001);
+    return series.map(s => ({
+      month: new Date(String(s.month)).toLocaleDateString('es-CO', { month: 'short' }),
+      value: s.ch4_eq_reduced_kg,
+      h: Math.round((s.ch4_eq_reduced_kg / max) * 110),
+    }));
+  }
+
+  protected farmMapEmbedUrl(farm: AdminFarmRow): SafeResourceUrl | null {
+    const key = (this.googleMapsApiKey() ?? '').trim();
+    if (!key) return null;
+    const q = encodeURIComponent([farm.name, farm.location].filter(Boolean).join(', ') || 'Colombia');
+    const url = `https://www.google.com/maps/embed/v1/place?key=${encodeURIComponent(key)}&q=${q}`;
+    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+  }
+
+  protected openAdminUserEditor(u: AdminUserRow, ev?: Event): void {
+    ev?.stopPropagation?.();
+    this.adminUserEditorMessage.set(null);
+    this.adminUserEditorId.set(u.id);
+    this.adminUserEditForm.patchValue({
+      full_name: u.full_name,
+      email: (u.email ?? '').trim(),
+      role: u.role,
+      location: u.location ?? '',
+      account_type: (u.account_type ?? 'ganadero') as 'admin' | 'ganadero',
+      new_password: '',
+    });
+    this.showAdminUserEditor.set(true);
+  }
+
+  protected closeAdminUserEditor(): void {
+    this.showAdminUserEditor.set(false);
+    this.adminUserEditorId.set(null);
+    this.adminUserEditorMessage.set(null);
+  }
+
+  protected submitAdminUserEditor(): void {
+    if (this.adminUserEditForm.invalid) {
+      this.adminUserEditForm.markAllAsTouched();
+      return;
+    }
+    const id = this.adminUserEditorId();
+    if (!id) return;
+    const v = this.adminUserEditForm.getRawValue();
+    const payload: {
+      full_name: string;
+      role: string;
+      location: string | null;
+      email: string;
+      account_type: 'admin' | 'ganadero';
+      new_password?: string;
+    } = {
+      full_name: v.full_name.trim(),
+      role: v.role.trim(),
+      location: v.location.trim() || null,
+      email: v.email.trim(),
+      account_type: v.account_type,
+    };
+    const np = v.new_password.trim();
+    if (np) payload.new_password = np;
+
+    this.adminUserEditorBusy.set(true);
+    this.adminUserEditorMessage.set(null);
+    this.api.adminUpdateUser(id, payload).subscribe({
+      next: () => {
+        this.adminUserEditorBusy.set(false);
+        this.closeAdminUserEditor();
+        this.loadAdminData();
+      },
+      error: err => {
+        this.adminUserEditorBusy.set(false);
+        this.adminUserEditorMessage.set(err?.error?.error ?? 'No se pudo guardar');
+      },
+    });
+  }
+
+  protected deleteAdminUserFromEditor(): void {
+    const id = this.adminUserEditorId();
+    if (!id) return;
+    if (!confirm('¿Eliminar este usuario y todas sus fincas asociadas?')) return;
+    this.adminUserEditorBusy.set(true);
+    this.api.adminDeleteUser(id).subscribe({
+      next: () => {
+        this.adminUserEditorBusy.set(false);
+        this.closeAdminUserEditor();
+        this.expandedAdminUserId.set(null);
+        this.loadAdminData();
+      },
+      error: err => {
+        this.adminUserEditorBusy.set(false);
+        this.adminUserEditorMessage.set(err?.error?.error ?? 'No se pudo eliminar');
+      },
+    });
+  }
+
+  protected openAdminProfileEditor(): void {
+    const u = this.profile()?.user;
+    if (!u) return;
+    this.adminProfileEditorOnly.set(true);
+    this.profileEditMessage.set(null);
+    this.profileEditForm.patchValue({
+      full_name: u.full_name ?? '',
+      role: u.role ?? 'Administración',
+      user_location: u.location ?? '',
+      farm_name: '',
+      farm_location: '',
+      area_ha: 0,
+      heads_active: 0,
+      breeds_text: '',
+      thermal_floor: '',
+      altitude_m: 0,
+      production_model: '',
+    });
+    this.showProfileEditor.set(true);
   }
 
   protected refreshAll() {
@@ -790,10 +1220,27 @@ export class App implements OnInit {
     { id: 'medicion', label: 'Medición' },
     { id: 'analisis', label: 'Análisis' },
     { id: 'reporte', label: 'Reporte' },
-    { id: 'auditoria', label: 'Auditoría' },
-    { id: 'certifica', label: 'Certifica' },
-    { id: 'pago', label: 'Pago' },
+    { id: 'auditoria', label: 'Auditoría externa' },
+    { id: 'certifica', label: 'Certificación' },
+    { id: 'pago', label: 'Pago / monetización' },
   ] as const;
+
+  protected readonly adminCertStepLabels = [
+    'Medición',
+    'Análisis',
+    'Reporte',
+    'Auditoría externa',
+    'Certificación',
+    'Pago / monetización',
+  ] as const;
+
+  protected certTimelineStates(currentStep: number): { label: string; state: 'done' | 'active' | 'todo' }[] {
+    const idx = Math.min(Math.max(Math.round(currentStep), 1), 6) - 1;
+    return this.adminCertStepLabels.map((label, i) => ({
+      label,
+      state: i < idx ? 'done' : i === idx ? 'active' : 'todo',
+    }));
+  }
   protected readonly certCurrentStepIndex = 2; // 0-based: "Reporte" actual
 
   protected readonly reportActionMessage = signal<string | null>(null);

@@ -97,13 +97,506 @@
     </div>
   }
 } @else {
+  @if (isAdminUser() && layoutMode() === 'admin') {
+    <div class="app-layout admin-layout">
+      <header class="topbar admin-topbar">
+        <div>
+          <div class="app-title">BIOFERT · Administración</div>
+          <div class="app-sub muted">Visión global de usuarios, fincas y sensores</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn" type="button" (click)="loadAdminData()">Refrescar</button>
+          <button class="btn" type="button" (click)="logout()">Salir</button>
+        </div>
+      </header>
+
+      @if (adminLoadError(); as admErr) {
+        <div class="banner err admin-inline-banner">{{ admErr }}</div>
+      }
+
+      <main class="page-scroll admin-main">
+        @switch (adminTab()) {
+          @case ('panel') {
+            <div class="admin-panel-grid">
+              <section class="card">
+                <h3>Resumen operativo</h3>
+                <p class="muted">Indicadores globales de la plataforma (demo).</p>
+                <div class="kpis admin-panel-kpis">
+                  <div class="kpi">
+                    <div class="kpi-lbl">Usuarios</div>
+                    <div class="kpi-val">{{ adminOverview()?.user_count ?? '—' }}</div>
+                  </div>
+                  <div class="kpi">
+                    <div class="kpi-lbl">Ganaderos</div>
+                    <div class="kpi-val">{{ adminOverview()?.ganadero_count ?? '—' }}</div>
+                  </div>
+                  <div class="kpi">
+                    <div class="kpi-lbl">Fincas</div>
+                    <div class="kpi-val">{{ adminOverview()?.farm_count ?? '—' }}</div>
+                  </div>
+                  <div class="kpi">
+                    <div class="kpi-lbl">Sensores</div>
+                    <div class="kpi-val">{{ adminOverview()?.sensor_count ?? '—' }}</div>
+                  </div>
+                  <div class="kpi kpi-warn">
+                    <div class="kpi-lbl">Sensores en alerta</div>
+                    <div class="kpi-val">{{ adminOverview()?.sensors_alerta ?? '—' }}</div>
+                  </div>
+                  <div class="kpi">
+                    <div class="kpi-lbl">Recs. pendientes</div>
+                    <div class="kpi-val">{{ adminOverview()?.recs_pendientes ?? '—' }}</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="card admin-panel-split">
+                <div>
+                  <h3 style="margin-top:0;">Distribución de sensores</h3>
+                  <p class="muted">Proporción por estado en todas las fincas.</p>
+                  @let sc = adminPanelSensorCounts();
+                  @if (sc.total > 0) {
+                    <div class="admin-stack-track" role="img" [attr.aria-label]="'Sensores: ' + sc.activo + ' activos, ' + sc.alerta + ' alerta, ' + sc.inactivo + ' inactivos'">
+                      @if (sc.activo > 0) {
+                        <div class="admin-stack-seg seg-activo" [style.width.%]="(100 * sc.activo) / sc.total" [title]="'Activos: ' + sc.activo"></div>
+                      }
+                      @if (sc.alerta > 0) {
+                        <div class="admin-stack-seg seg-alerta" [style.width.%]="(100 * sc.alerta) / sc.total" [title]="'Alerta: ' + sc.alerta"></div>
+                      }
+                      @if (sc.inactivo > 0) {
+                        <div class="admin-stack-seg seg-inactivo" [style.width.%]="(100 * sc.inactivo) / sc.total" [title]="'Inactivos: ' + sc.inactivo"></div>
+                      }
+                    </div>
+                    <div class="admin-legend-row">
+                      <span><span class="admin-dot seg-activo"></span> Activo {{ sc.activo }}</span>
+                      <span><span class="admin-dot seg-alerta"></span> Alerta {{ sc.alerta }}</span>
+                      <span><span class="admin-dot seg-inactivo"></span> Inactivo {{ sc.inactivo }}</span>
+                    </div>
+                  } @else {
+                    <p class="muted">Sin sensores registrados.</p>
+                  }
+                </div>
+                <div>
+                  <h3 style="margin-top:0;">Cuentas</h3>
+                  <p class="muted">Ganaderos vs administradores.</p>
+                  @let mix = adminPanelAccountMix();
+                  <div class="admin-dual-bar">
+                    <div class="admin-dual-row">
+                      <span>Ganaderos</span>
+                      <div class="admin-hbar-track"><div class="admin-hbar-fill gan" [style.width.%]="mix.ganPct"></div></div>
+                      <span class="admin-dual-num">{{ mix.gan }}</span>
+                    </div>
+                    <div class="admin-dual-row">
+                      <span>Admin</span>
+                      <div class="admin-hbar-track"><div class="admin-hbar-fill adm" [style.width.%]="mix.admPct"></div></div>
+                      <span class="admin-dual-num">{{ mix.adm }}</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="card admin-alert-card">
+                <h3 style="margin-top:0;">Alertas · sensores CH₄</h3>
+                <p class="muted">Dispositivos en estado alerta (prioridad de revisión).</p>
+                @if (adminPanelAlertSensors().length === 0) {
+                  <div class="admin-alert-ok">No hay sensores en alerta en este momento.</div>
+                } @else {
+                  <ul class="admin-alert-list">
+                    @for (s of adminPanelAlertSensors(); track s.id) {
+                      <li>
+                        <span class="admin-alert-pill">{{ s.code }}</span>
+                        <span class="admin-alert-main">{{ s.zone }} · {{ s.farm_name }}</span>
+                        <span class="admin-alert-meta">{{ s.last_ch4_ppm ?? '—' }} ppm</span>
+                        <span class="muted tiny admin-alert-email">{{ s.owner_email }}</span>
+                      </li>
+                    }
+                  </ul>
+                }
+              </section>
+
+              @if (adminPanelInactiveSensors().length > 0) {
+                <section class="card admin-warn-card">
+                  <h3 style="margin-top:0;">Avisos · sensores inactivos</h3>
+                  <p class="muted">Últimos dispositivos sin estado operativo normal.</p>
+                  <ul class="admin-alert-list admin-alert-list--compact">
+                    @for (s of adminPanelInactiveSensors(); track s.id) {
+                      <li>
+                        <span class="admin-alert-pill inact">{{ s.code }}</span>
+                        <span class="admin-alert-main">{{ s.farm_name }}</span>
+                        <span class="muted tiny">{{ s.zone }}</span>
+                      </li>
+                    }
+                  </ul>
+                </section>
+              }
+
+              <section class="card">
+                <h3 style="margin-top:0;">CO₂eq acumulado por finca (top 10)</h3>
+                <p class="muted">Comparativo de impacto reportado (toneladas).</p>
+                <div class="admin-hbar-list">
+                  @for (row of adminPanelCo2eqByFarm(); track row.farm_id) {
+                    <div class="admin-hbar-item">
+                      <div class="admin-hbar-label" [title]="row.fullName">{{ row.name }}</div>
+                      <div class="admin-hbar-track wide"><div class="admin-hbar-fill co2" [style.width.%]="row.pct"></div></div>
+                      <div class="admin-hbar-val">{{ row.t.toFixed(2) }} t</div>
+                    </div>
+                  } @empty {
+                    <p class="muted">Sin datos de reportes.</p>
+                  }
+                </div>
+              </section>
+
+              <section class="card">
+                <h3 style="margin-top:0;">Cabezas por finca (top 8)</h3>
+                <p class="muted">Rebaños declarados en registro.</p>
+                <div class="admin-hbar-list">
+                  @for (row of adminPanelHeadsByFarm(); track row.id) {
+                    <div class="admin-hbar-item">
+                      <div class="admin-hbar-label">{{ row.name }}</div>
+                      <div class="admin-hbar-track wide"><div class="admin-hbar-fill heads" [style.width.%]="row.pct"></div></div>
+                      <div class="admin-hbar-val">{{ row.heads }}</div>
+                    </div>
+                  } @empty {
+                    <p class="muted">Sin fincas.</p>
+                  }
+                </div>
+              </section>
+            </div>
+          }
+          @case ('usuarios') {
+            <section class="card">
+              <h3>Usuarios</h3>
+              <p class="muted">Clic en la fila para ver metano reducido (estimado), bonos y auditoría. Use Editar para modificar o eliminar.</p>
+              <div class="table-scroll">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Nombre</th>
+                      <th>Email</th>
+                      <th>Cuenta</th>
+                      <th>Fincas</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (u of adminUsers(); track u.id) {
+                      <tr class="click-row" (click)="toggleAdminUserRow(u.id)">
+                        <td>{{ u.id }}</td>
+                        <td>{{ u.full_name }}</td>
+                        <td>{{ u.email ?? '—' }}</td>
+                        <td>{{ u.account_type ?? 'ganadero' }}</td>
+                        <td>{{ u.farm_count }}</td>
+                        <td (click)="$event.stopPropagation()">
+                          <button class="btn tiny" type="button" (click)="openAdminUserEditor(u, $event)">Editar</button>
+                        </td>
+                      </tr>
+                      @if (expandedAdminUserId() === u.id) {
+                        <tr class="detail-row">
+                          <td colspan="6">
+                            @if (adminUserDetailBusy()) {
+                              <div class="muted">Cargando…</div>
+                            } @else if (adminUserImpact(); as imp) {
+                              <div class="admin-detail-grid">
+                                <div>
+                                  <h4 style="margin:0 0 8px 0;">Metano reducido estimado (kg CH₄ eq.)</h4>
+                                  <div class="bar-chart admin-mini-chart">
+                                    @for (b of ch4EqBarsFromImpact(imp.co2eq_by_month); track b.month) {
+                                      <div class="bar-col">
+                                        <div class="bar-val">{{ b.value.toFixed(0) }}</div>
+                                        <div class="bar" [style.height.px]="b.h"></div>
+                                        <div class="bar-month">{{ b.month }}</div>
+                                      </div>
+                                    } @empty {
+                                      <div class="muted">Sin datos.</div>
+                                    }
+                                  </div>
+                                </div>
+                                <div>
+                                  <h4 style="margin:0 0 8px 0;">Bonos de carbono (todas las fincas)</h4>
+                                  <div class="kpis" style="grid-template-columns: repeat(2, 1fr);">
+                                    <div class="kpi">
+                                      <div class="kpi-lbl">Bonos</div>
+                                      <div class="kpi-val">{{ imp.totals.bonds_count }}</div>
+                                    </div>
+                                    <div class="kpi">
+                                      <div class="kpi-lbl">Valor estimado</div>
+                                      <div class="kpi-val">{{ formatUsd(imp.totals.value_estimated_usd) }}</div>
+                                    </div>
+                                  </div>
+                                  <p class="muted tiny" style="margin-top:8px;">t CO₂eq acumulado: {{ imp.totals.co2eq_reduced_t.toFixed(2) }}</p>
+                                </div>
+                              </div>
+                              <h4 style="margin:14px 0 6px 0;">Auditoría (Fecha · Acción)</h4>
+                              <div class="table-scroll">
+                                <table class="data-table">
+                                  <thead>
+                                    <tr>
+                                      <th>Fecha</th>
+                                      <th>Acción</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    @for (a of adminUserAuditDetail(); track a.id) {
+                                      <tr>
+                                        <td class="tiny">{{ a.created_at | date: 'short' }}</td>
+                                        <td>{{ a.action }}</td>
+                                      </tr>
+                                    } @empty {
+                                      <tr>
+                                        <td colspan="2" class="muted">Sin eventos de auditoría.</td>
+                                      </tr>
+                                    }
+                                  </tbody>
+                                </table>
+                              </div>
+                            }
+                          </td>
+                        </tr>
+                      }
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          }
+          @case ('fincas') {
+            <section class="card">
+              <h3>Fincas</h3>
+              <p class="muted">Clic en la fila para mapa y gráfica de CO₂eq por mes.</p>
+              <div class="table-scroll">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Finca</th>
+                      <th>Propietario</th>
+                      <th>Cabezas</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (f of adminFarms(); track f.id) {
+                      <tr class="click-row" (click)="toggleAdminFarmRow(f.id)">
+                        <td>{{ f.id }}</td>
+                        <td>{{ f.name }}</td>
+                        <td>{{ f.owner_name }}<br /><span class="muted tiny">{{ f.owner_email }}</span></td>
+                        <td>{{ f.heads_active }}</td>
+                        <td (click)="$event.stopPropagation()">
+                          <button class="btn tiny primary" type="button" (click)="openFarmAsOperator(f)">Ver app</button>
+                        </td>
+                      </tr>
+                      @if (expandedAdminFarmId() === f.id) {
+                        <tr class="detail-row">
+                          <td colspan="5">
+                            @if (adminFarmDetailBusy()) {
+                              <div class="muted">Cargando…</div>
+                            } @else {
+                              <h4 style="margin:0 0 8px 0;">Ubicación</h4>
+                              @if (farmMapEmbedUrl(f); as mapUrl) {
+                                <div class="map-wrap admin-map-wrap">
+                                  <iframe class="map-frame" [src]="mapUrl" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+                                </div>
+                              } @else {
+                                <p class="muted">Mapa no disponible (configure GOOGLE_MAPS_API_KEY).</p>
+                              }
+                              <h4 style="margin:14px 0 8px 0;">CO₂eq reducido por mes (metano / bonos en app ganadero)</h4>
+                              <div class="bar-chart admin-mini-chart">
+                                @for (b of co2eqBarsFromSeries(adminFarmReportsExtra()?.co2eqByMonth ?? []); track b.month) {
+                                  <div class="bar-col">
+                                    <div class="bar-val">{{ b.value.toFixed(1) }}t</div>
+                                    <div class="bar" [style.height.px]="b.h"></div>
+                                    <div class="bar-month">{{ b.month }}</div>
+                                  </div>
+                                } @empty {
+                                  <div class="muted">Sin datos mensuales.</div>
+                                }
+                              </div>
+                            }
+                          </td>
+                        </tr>
+                      }
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          }
+          @case ('sensores') {
+            <section class="card">
+              <h3>Sensores (todas las fincas)</h3>
+              <div class="table-scroll">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Código</th>
+                      <th>Zona</th>
+                      <th>Estado</th>
+                      <th>Finca</th>
+                      <th>CH₄</th>
+                      <th>Última medición</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (s of adminSensors(); track s.id) {
+                      <tr [class]="'sensor-status-row sensor-status-row--' + s.status">
+                        <td>{{ s.code }}</td>
+                        <td>{{ s.zone }}</td>
+                        <td>{{ s.status }}</td>
+                        <td>{{ s.farm_name }}<br /><span class="muted tiny">{{ s.owner_email }}</span></td>
+                        <td>{{ s.last_ch4_ppm ?? '—' }}</td>
+                        <td class="tiny">{{ s.last_recorded_at ? (s.last_recorded_at | date: 'short') : '—' }}</td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          }
+          @case ('reportes') {
+            <section class="card">
+              <h3>Reportes y certificación por finca</h3>
+              <p class="muted">Totales globales y avance del certificado (demo).</p>
+              <div class="kpis">
+                <div class="kpi">
+                  <div class="kpi-lbl">t CO₂eq acum.</div>
+                  <div class="kpi-val">{{ (adminReports()?.total_co2eq_reduced_t ?? 0).toFixed(2) }}</div>
+                </div>
+                <div class="kpi">
+                  <div class="kpi-lbl">Valor bonos (USD)</div>
+                  <div class="kpi-val">{{ formatUsd(adminReports()?.total_bonds_usd ?? 0) }}</div>
+                </div>
+              </div>
+              @for (row of adminReports()?.byFarm ?? []; track row.farm_id) {
+                <div class="card admin-cert-block" style="margin-top:12px;">
+                  <h4 style="margin:0 0 6px 0;">{{ row.farm_name }}</h4>
+                  <p class="muted" style="margin:0 0 8px 0;">
+                    <b>Etapa actual:</b> {{ row.certification_label }}
+                    <span class="tiny"> (paso {{ row.certification_step }} de 6)</span>
+                  </p>
+                  <div class="cert-steps admin-cert-steps">
+                    @for (st of certTimelineStates(row.certification_step); track $index) {
+                      <div
+                        class="cert-step"
+                        [class.done]="st.state === 'done'"
+                        [class.active]="st.state === 'active'"
+                        [class.todo]="st.state === 'todo'"
+                      >
+                        <div class="cert-dot">
+                          @if (st.state === 'done') {
+                            ✓
+                          } @else if (st.state === 'active') {
+                            ●
+                          } @else {
+                            ○
+                          }
+                        </div>
+                        <div class="cert-lbl">{{ st.label }}</div>
+                      </div>
+                    }
+                  </div>
+                  <div class="admin-cert-metrics tiny muted" style="margin-top:10px;">
+                    CO₂eq acum.: {{ row.co2eq_reduced_t.toFixed(2) }} t · Bonos: {{ row.bonds_count }} · {{ formatUsd(row.value_estimated_usd) }}
+                  </div>
+                </div>
+              }
+            </section>
+          }
+          @case ('config') {
+            <section class="card">
+              <h3>Configuración</h3>
+              <div class="profile-head" style="margin-bottom:12px;">
+                <div class="avatar">{{ userInitials() }}</div>
+                <div>
+                  <div class="profile-name">{{ profile()?.user?.full_name ?? '—' }}</div>
+                  <div class="profile-role">{{ profile()?.user?.role ?? '—' }}</div>
+                  <div class="profile-loc">{{ profile()?.user?.email ?? '—' }}</div>
+                  <div class="profile-loc">{{ profile()?.user?.location ?? '—' }}</div>
+                </div>
+              </div>
+              <button class="btn primary" type="button" (click)="openAdminProfileEditor()">Editar perfil de administrador</button>
+              <p style="margin-top:14px;"><span class="muted">API Maps (enmascarada):</span> {{ adminConfig()?.googleMapsApiKeyMasked ?? '—' }}</p>
+              <p><span class="muted">Puerto API:</span> {{ adminConfig()?.port ?? '—' }}</p>
+              <p><span class="muted">Base de datos:</span> {{ adminConfig()?.database ?? '—' }}</p>
+            </section>
+          }
+        }
+      </main>
+
+      <nav class="bottom-nav app-bottom-tabs app-bottom-tabs--admin" aria-label="Administración">
+        <button type="button" class="nav-item" [class.active]="adminTab() === 'panel'" (click)="navigateAdmin('panel')">
+          <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z"></path></svg>
+          <span>Panel</span>
+        </button>
+        <button type="button" class="nav-item" [class.active]="adminTab() === 'usuarios'" (click)="navigateAdmin('usuarios')">
+          <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 3-1.34 3-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C17 14.17 12.33 13 10 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"></path></svg>
+          <span>Usuarios</span>
+        </button>
+        <button type="button" class="nav-item" [class.active]="adminTab() === 'fincas'" (click)="navigateAdmin('fincas')">
+          <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 9v12h6v-7h8v7h6V9zm0 2.2 6.9 4.3L12 8.6 5.1 9.5z"></path></svg>
+          <span>Fincas</span>
+        </button>
+        <button type="button" class="nav-item" [class.active]="adminTab() === 'sensores'" (click)="navigateAdmin('sensores')">
+          <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 16 0h-2a6 6 0 0 0-12 0zm3 0a5 5 0 0 1 10 0h-2a3 3 0 0 0-6 0zm5 2a2 2 0 0 0-2 2v4h4v-4a2 2 0 0 0-2-2z"></path></svg>
+          <span>Sensores</span>
+        </button>
+        <button type="button" class="nav-item" [class.active]="adminTab() === 'reportes'" (click)="navigateAdmin('reportes')">
+          <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14zm4-2h2V9H8zm4 0h2V7h-2zm4 0h2v-5h-2z"></path></svg>
+          <span>Reportes</span>
+        </button>
+        <button type="button" class="nav-item" [class.active]="adminTab() === 'config'" (click)="navigateAdmin('config')">
+          <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4.4 0-8 2.2-8 5v2h16v-2c0-2.8-3.6-5-8-5z"></path></svg>
+          <span>Config</span>
+        </button>
+      </nav>
+    </div>
+  } @else {
   <div class="app-layout">
-    <header class="topbar">
-      <div>
-        <div class="app-title">BIOFERT</div>
-        <div class="app-sub">Finca: {{ selectedFarm()?.name ?? '—' }}</div>
+    @if (isAdminUser() && layoutMode() === 'ganadero' && previewOwnerLabel()) {
+      <div class="admin-preview-strip">
+        <div>
+          <strong>Vista operador</strong>
+          <span class="muted"> · {{ previewOwnerLabel() }}</span>
+        </div>
+        <button class="btn tiny" type="button" (click)="backToAdminPanel()">← Panel admin</button>
       </div>
-      <button class="btn" type="button" (click)="refreshAll()">Refrescar</button>
+    }
+    <header class="topbar topbar-user">
+      <div class="topbar-user-inner">
+        <div class="topbar-user-row">
+          <div>
+            <div class="app-title">BIOFERT</div>
+            <div class="app-sub">{{ selectedFarm()?.location?.trim() || selectedFarm()?.name || 'Panel de control' }}</div>
+          </div>
+          <button class="btn" type="button" (click)="refreshAll()">Refrescar</button>
+        </div>
+        @if (farms().length > 1) {
+          <div class="farm-switcher" aria-label="Elegir finca activa">
+            <div class="farm-switcher-head">
+              <span class="farm-switcher-title">Finca activa</span>
+              <span class="farm-switcher-hint">{{ farms().length }} predios</span>
+            </div>
+            <div class="farm-chip-scroll">
+              @for (ff of farms(); track ff.id) {
+                <button
+                  type="button"
+                  class="farm-chip"
+                  [class.farm-chip-active]="selectedFarmId() === ff.id"
+                  (click)="selectFarm(ff.id)"
+                >
+                  <span class="farm-chip-name">{{ ff.name }}</span>
+                  @if (ff.heads_active != null) {
+                    <span class="farm-chip-meta">{{ ff.heads_active }} cab.</span>
+                  }
+                </button>
+              }
+            </div>
+          </div>
+        } @else if (selectedFarm()) {
+          <div class="farm-switcher farm-switcher-single">
+            <span class="farm-chip-name solo">{{ selectedFarm()?.name }}</span>
+          </div>
+        }
+      </div>
     </header>
 
     <main class="page-scroll">
@@ -164,7 +657,7 @@
               {{ dashboard()!.recommendationDay!.notes ?? '—' }}
               · Reducción esperada: -{{ dashboard()!.recommendationDay!.expected_reduction_pct ?? '—' }}% CH₄
             </div>
-            <button class="link-btn" type="button" (click)="navigate('recomendaciones')">Ver detalles</button>
+            <button class="link-btn" type="button" (click)="navigate('reportes')">Ver reportes</button>
           </section>
         }
 
@@ -175,7 +668,7 @@
             {{ dashboardAiRec().short }}
             · Reducción esperada: -{{ dashboardAiRec().expected_reduction_pct }}% CH₄
           </div>
-          <button class="link-btn" type="button" (click)="navigate('recomendaciones')">Ver todas</button>
+          <button class="link-btn" type="button" (click)="navigate('sensores')">Ver sensores</button>
         </section>
 
         <section class="card" style="margin-top:12px;">
@@ -275,7 +768,7 @@
 
           <div class="list" style="margin-top:10px;">
             @for (s of filteredSensors(); track s.id) {
-              <div class="row">
+              <div [class]="'row sensor-row-status sensor-row-status--' + s.status">
                 <div class="row-main">
                   <div class="row-title">
                     <span class="pill">{{ s.code }}</span>
@@ -284,7 +777,14 @@
                       {{ s.status }}
                     </span>
                   </div>
-                  <div class="row-sub">Batería: {{ s.battery_pct }}%</div>
+                  <div class="row-sub">
+                    Batería: {{ s.battery_pct }}%
+                    @if (s.last_recorded_at) {
+                      · Última medición: {{ s.last_recorded_at | date: 'short' }}
+                    } @else {
+                      · Sin lecturas
+                    }
+                  </div>
                 </div>
                 <div class="row-right">
                   <div class="ppm" [class.alert]="s.status === 'alerta'">{{ s.last_ch4_ppm ?? '—' }}</div>
@@ -293,106 +793,6 @@
               </div>
             } @empty {
               <div class="muted">No hay sensores para este filtro.</div>
-            }
-          </div>
-        </section>
-      }
-
-      @if (screen() === 'recomendaciones' && selectedFarmId() !== null) {
-        <section class="card">
-          <h3>Recomendaciones IA</h3>
-          <p>Lista de recomendaciones</p>
-
-          <div class="filters">
-            <button class="filter-btn" [class.active]="aiRecFilter()==='todas'" (click)="aiRecFilter.set('todas')">Todas</button>
-            <button class="filter-btn" [class.active]="aiRecFilter()==='pendiente'" (click)="aiRecFilter.set('pendiente')">Pendientes</button>
-            <button class="filter-btn" [class.active]="aiRecFilter()==='aplicada'" (click)="aiRecFilter.set('aplicada')">Aplicadas</button>
-            <button class="filter-btn" [class.active]="aiRecFilter()==='descartada'" (click)="aiRecFilter.set('descartada')">Descartadas</button>
-          </div>
-
-          <div class="list">
-            @for (r of filteredAiRecs(); track r.id) {
-              <button class="rec-item" type="button" (click)="toggleAiRec(r.id)" [attr.aria-expanded]="expandedAiRecId() === r.id">
-                <div class="rec-head">
-                  <div class="rec-title">{{ r.title }}</div>
-                  <div class="rec-meta">
-                    <span class="badge pending">IA</span>
-                    <span class="badge applied">-{{ r.expected_reduction_pct }}%</span>
-                    <span
-                      class="badge"
-                      [class.pending]="r.status==='pendiente'"
-                      [class.applied]="r.status==='aplicada'"
-                      [class.rejected]="r.status==='descartada'"
-                    >
-                      {{ recStatusLabel[r.status] }}
-                    </span>
-                    <span class="badge" [class.rejected]="r.difficulty==='alta'" [class.pending]="r.difficulty==='media'" [class.applied]="r.difficulty==='facil'">
-                      {{ r.difficulty }}
-                    </span>
-                  </div>
-                </div>
-                <div class="rec-short">{{ r.short }}</div>
-                <div class="rec-chevron">{{ expandedAiRecId() === r.id ? 'Ocultar' : 'Ver respuesta' }} →</div>
-              </button>
-
-              @if (expandedAiRecId() === r.id) {
-                <div class="rec-detail card" style="margin-top:10px;">
-                  <h3 style="margin:0 0 8px 0;">Respuesta de la IA</h3>
-                  <div class="rec-section">
-                    <div class="rec-section-title">Resumen</div>
-                    <div class="rec-section-body">{{ r.response.resumen }}</div>
-                  </div>
-                  <div class="rec-section">
-                    <div class="rec-section-title">Por qué funciona</div>
-                    <ul class="rec-ul">
-                      @for (it of r.response.porQueFunciona; track $index) {
-                        <li>{{ it }}</li>
-                      }
-                    </ul>
-                  </div>
-                  <div class="rec-section">
-                    <div class="rec-section-title">Plan de implementación</div>
-                    <ol class="rec-ol">
-                      @for (it of r.response.pasos; track $index) {
-                        <li>{{ it }}</li>
-                      }
-                    </ol>
-                  </div>
-                  <div class="rec-grid-2">
-                    <div class="rec-section">
-                      <div class="rec-section-title">Riesgos y cuidados</div>
-                      <ul class="rec-ul">
-                        @for (it of r.response.riesgos; track $index) {
-                          <li>{{ it }}</li>
-                        }
-                      </ul>
-                    </div>
-                    <div class="rec-section">
-                      <div class="rec-section-title">Métricas a seguir</div>
-                      <ul class="rec-ul">
-                        @for (it of r.response.metricas; track $index) {
-                          <li>{{ it }}</li>
-                        }
-                      </ul>
-                    </div>
-                  </div>
-                  <div class="rec-section">
-                    <div class="rec-section-title">Costo y tiempo (estimado)</div>
-                    <ul class="rec-ul">
-                      @for (it of r.response.costoTiempo; track $index) {
-                        <li>{{ it }}</li>
-                      }
-                    </ul>
-                  </div>
-
-                  @if (r.status === 'pendiente') {
-                    <div class="rec-actions">
-                      <button class="btn primary" type="button" (click)="applyAiRec(r.id)">Aplicar</button>
-                      <button class="btn danger" type="button" (click)="discardAiRec(r.id)">Descartar</button>
-                    </div>
-                  }
-                </div>
-              }
             }
           </div>
         </section>
@@ -598,7 +998,7 @@
       }
     </main>
 
-    <nav class="bottom-nav" aria-label="Navegación principal">
+    <nav class="bottom-nav app-bottom-tabs app-bottom-tabs--user" aria-label="Navegación principal">
       <button type="button" class="nav-item" [class.active]="screen() === 'inicio'" (click)="navigate('inicio')">
         <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z"></path></svg>
         <span>Dashboard</span>
@@ -606,10 +1006,6 @@
       <button type="button" class="nav-item" [class.active]="screen() === 'sensores'" (click)="navigate('sensores')">
         <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 16 0h-2a6 6 0 0 0-12 0zm3 0a5 5 0 0 1 10 0h-2a3 3 0 0 0-6 0zm5 2a2 2 0 0 0-2 2v4h4v-4a2 2 0 0 0-2-2z"></path></svg>
         <span>Sensores</span>
-      </button>
-      <button type="button" class="nav-item" [class.active]="screen() === 'recomendaciones'" (click)="navigate('recomendaciones')">
-        <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10a2 2 0 0 1 2 2v14l-4-2-3 2-3-2-4 2V5a2 2 0 0 1 2-2zm2 5h6v2H9zm0 4h6v2H9z"></path></svg>
-        <span>Recomendaciones</span>
       </button>
       <button type="button" class="nav-item" [class.active]="screen() === 'reportes'" (click)="navigate('reportes')">
         <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14zm4-2h2V9H8zm4 0h2V7h-2zm4 0h2v-5h-2z"></path></svg>
@@ -621,6 +1017,7 @@
       </button>
     </nav>
   </div>
+  }
 }
 
 @if (showCredentialsEditor()) {
@@ -658,8 +1055,10 @@
 @if (showProfileEditor()) {
   <div class="modal-backdrop" (click)="closeProfileEditor()">
     <div class="modal card" (click)="$event.stopPropagation()">
-      <h3 style="margin-top:0;">Editar perfil</h3>
-      <p class="muted">Modifica los datos del usuario y del predio (finca seleccionada).</p>
+      <h3 style="margin-top:0;">{{ adminProfileEditorOnly() ? 'Editar perfil (administrador)' : 'Editar perfil' }}</h3>
+      <p class="muted">
+        {{ adminProfileEditorOnly() ? 'Actualiza tus datos básicos de cuenta.' : 'Modifica los datos del usuario y del predio (finca seleccionada).' }}
+      </p>
 
       @if (profileEditMessage(); as pm) {
         <div class="banner" [class.err]="pm.type === 'err'" [class.ok]="pm.type === 'ok'">{{ pm.text }}</div>
@@ -680,6 +1079,7 @@
           <input class="input" type="text" formControlName="user_location" autocomplete="address-level1" />
         </label>
 
+        @if (!adminProfileEditorOnly()) {
         <div class="predio-title" style="margin-top:6px;">Predio</div>
         <label>
           Nombre de la finca
@@ -717,10 +1117,56 @@
           Modelo de producción
           <input class="input" type="text" formControlName="production_model" placeholder="Ej: Doble propósito" />
         </label>
+        }
 
         <div class="modal-actions">
           <button class="btn" type="button" (click)="closeProfileEditor()">Cancelar</button>
           <button class="btn primary" type="submit" [disabled]="profileEditBusy()">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+}
+
+@if (showAdminUserEditor()) {
+  <div class="modal-backdrop" (click)="closeAdminUserEditor()">
+    <div class="modal card" (click)="$event.stopPropagation()">
+      <h3 style="margin-top:0;">Editar usuario</h3>
+      @if (adminUserEditorMessage(); as em) {
+        <div class="banner err">{{ em }}</div>
+      }
+      <form class="form" [formGroup]="adminUserEditForm" (ngSubmit)="submitAdminUserEditor()">
+        <label>
+          Nombre completo
+          <input class="input" type="text" formControlName="full_name" />
+        </label>
+        <label>
+          Email
+          <input class="input" type="email" formControlName="email" />
+        </label>
+        <label>
+          Rol
+          <input class="input" type="text" formControlName="role" />
+        </label>
+        <label>
+          Ubicación
+          <input class="input" type="text" formControlName="location" />
+        </label>
+        <label>
+          Tipo de cuenta
+          <select class="input" formControlName="account_type">
+            <option value="ganadero">Ganadero</option>
+            <option value="admin">Administrador</option>
+          </select>
+        </label>
+        <label>
+          Nueva contraseña (opcional)
+          <input class="input" type="password" formControlName="new_password" autocomplete="new-password" />
+        </label>
+        <div class="modal-actions">
+          <button class="btn danger" type="button" (click)="deleteAdminUserFromEditor()" [disabled]="adminUserEditorBusy()">Eliminar</button>
+          <button class="btn" type="button" (click)="closeAdminUserEditor()">Cancelar</button>
+          <button class="btn primary" type="submit" [disabled]="adminUserEditorBusy()">Guardar</button>
         </div>
       </form>
     </div>

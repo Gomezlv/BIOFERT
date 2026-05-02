@@ -40,15 +40,91 @@ export type Farm = {
   thermal_floor?: string | null;
   altitude_m?: number | null;
   production_model?: string | null;
+  certification_step?: number;
 };
+
+export type AccountType = 'admin' | 'ganadero';
 
 export type UserRow = {
   id: number;
   full_name: string;
   role: string;
+  account_type?: AccountType;
   location: string | null;
   email: string | null;
   created_at?: string;
+};
+
+export type AdminOverview = {
+  user_count: number;
+  ganadero_count: number;
+  admin_count: number;
+  farm_count: number;
+  sensor_count: number;
+  sensors_alerta: number;
+  recs_pendientes: number;
+};
+
+export type AdminUserRow = UserRow & { farm_count: number };
+
+export type AdminFarmRow = Farm & {
+  owner_email: string | null;
+  owner_name: string | null;
+  created_at?: string;
+};
+
+export type AdminSensorRow = Sensor & {
+  farm_name: string;
+  owner_user_id: number;
+  owner_email: string | null;
+  installed_at?: string;
+};
+
+export type AdminFarmRecommendationRow = FarmRecommendationRow & {
+  farm_name: string;
+  owner_email: string | null;
+};
+
+export type AdminReportsSummary = {
+  total_co2eq_reduced_t: number;
+  total_bonds_usd: number;
+  byFarm: {
+    farm_id: number;
+    farm_name: string;
+    certification_step: number;
+    certification_label: string;
+    co2eq_reduced_t: number;
+    bonds_count: number;
+    value_estimated_usd: number;
+  }[];
+};
+
+export type AdminUserImpact = {
+  user_id: number;
+  co2eq_by_month: { month: string; co2eq_reduced_t: number; ch4_eq_reduced_kg: number }[];
+  totals: { co2eq_reduced_t: number; bonds_count: number; value_estimated_usd: number };
+};
+
+export type AdminUserAuditEntry = {
+  id: number;
+  action: string;
+  meta: unknown;
+  created_at: string;
+};
+
+export type AdminAuditRow = {
+  id: number;
+  user_id: number | null;
+  action: string;
+  meta: unknown;
+  created_at: string;
+  user_email: string | null;
+};
+
+export type AdminConfigSummary = {
+  googleMapsApiKeyMasked: string | null;
+  port: number;
+  database: string;
 };
 
 export type Profile = {
@@ -176,6 +252,68 @@ export class ApiService {
 
   reports(farmId = 1): Observable<Reports> {
     return this.http.get<Reports>(`${this.baseUrl}/reports?farmId=${farmId}`);
+  }
+
+  adminOverview(): Observable<AdminOverview> {
+    return this.http.get<AdminOverview>(`${this.baseUrl}/admin/overview`);
+  }
+
+  adminUsers(): Observable<AdminUserRow[]> {
+    return this.http.get<AdminUserRow[]>(`${this.baseUrl}/admin/users`);
+  }
+
+  adminFarms(): Observable<AdminFarmRow[]> {
+    return this.http.get<AdminFarmRow[]>(`${this.baseUrl}/admin/farms`);
+  }
+
+  adminSensors(): Observable<AdminSensorRow[]> {
+    return this.http.get<AdminSensorRow[]>(`${this.baseUrl}/admin/sensors`);
+  }
+
+  adminFarmRecommendations(): Observable<AdminFarmRecommendationRow[]> {
+    return this.http.get<AdminFarmRecommendationRow[]>(`${this.baseUrl}/admin/farm-recommendations`);
+  }
+
+  adminUserFarms(userId: number): Observable<Farm[]> {
+    return this.http.get<Farm[]>(`${this.baseUrl}/admin/users/${userId}/farms`);
+  }
+
+  adminUserImpact(userId: number): Observable<AdminUserImpact> {
+    return this.http.get<AdminUserImpact>(`${this.baseUrl}/admin/users/${userId}/impact`);
+  }
+
+  adminUserAuditLog(userId: number): Observable<AdminUserAuditEntry[]> {
+    return this.http.get<AdminUserAuditEntry[]>(`${this.baseUrl}/admin/users/${userId}/audit-log`);
+  }
+
+  adminUpdateUser(
+    userId: number,
+    payload: {
+      full_name?: string;
+      role?: string;
+      location?: string | null;
+      email?: string;
+      account_type?: AccountType;
+      new_password?: string;
+    }
+  ): Observable<{ user: UserRow }> {
+    return this.http.patch<{ user: UserRow }>(`${this.baseUrl}/admin/users/${userId}`, payload);
+  }
+
+  adminDeleteUser(userId: number): Observable<{ ok: boolean }> {
+    return this.http.delete<{ ok: boolean }>(`${this.baseUrl}/admin/users/${userId}`);
+  }
+
+  adminReportsSummary(): Observable<AdminReportsSummary> {
+    return this.http.get<AdminReportsSummary>(`${this.baseUrl}/admin/reports-summary`);
+  }
+
+  adminAudit(): Observable<AdminAuditRow[]> {
+    return this.http.get<AdminAuditRow[]>(`${this.baseUrl}/admin/audit`);
+  }
+
+  adminConfigSummary(): Observable<AdminConfigSummary> {
+    return this.http.get<AdminConfigSummary>(`${this.baseUrl}/admin/config-summary`);
   }
 }
 
