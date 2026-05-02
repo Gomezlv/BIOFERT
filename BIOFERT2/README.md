@@ -115,3 +115,15 @@ Puedes decir “trabajo futuro” para:
 - Tiempo real (websockets) para lecturas IoT
 - Validaciones avanzadas, paginación y roles
 
+
+------
+### Consola 1:
+psql -h localhost -U postgres -d metaganado -f "database.sql"
+
+### Consola 2:
+
+npm run dev
+
+### Consola 3:
+
+npm start
