@@ -52,6 +52,7 @@ npm install
 2. Levanta el servidor:
 
 ```bash
+export GOOGLE_MAPS_API_KEY=""
 npm run dev
 ```
 
