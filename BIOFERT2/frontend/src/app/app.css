@@ -331,6 +331,54 @@
   overflow: auto;
 }
 
+.modal--rec-ai {
+  width: min(560px, 100%);
+  max-height: min(92vh, 720px);
+}
+
+.rec-ai-wrap {
+  max-height: min(52vh, 440px);
+  overflow: auto;
+  margin-top: 10px;
+  padding: 2px 6px 4px 0;
+}
+
+.rec-ai-block + .rec-ai-block {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #e5f2e8;
+}
+
+.rec-ai-h {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  font-weight: 800;
+  color: #1a4d2e;
+}
+
+.rec-ai-p {
+  margin: 0 0 8px 0;
+  color: #2a4a35;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.rec-ai-ul {
+  margin: 0 0 4px 0;
+  padding-left: 18px;
+  color: #2a4a35;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.rec-ai-ul li {
+  margin-bottom: 6px;
+}
+
+.rec-ai-disclaimer {
+  line-height: 1.35;
+}
+
 .modal-actions {
   display: flex;
   gap: 10px;
@@ -1375,7 +1423,7 @@ svg .marker-peak {
   color: #a65a00;
 }
 
-/* Barra inferior compartida: admin (6 ítems) y usuario (4 ítems) */
+/* Barra inferior compartida: admin (6 ítems) y usuario (5 ítems) */
 .app-bottom-tabs--admin {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -1387,7 +1435,7 @@ svg .marker-peak {
 }
 
 .app-bottom-tabs--user {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .click-row {
@@ -1395,6 +1443,20 @@ svg .marker-peak {
 }
 .click-row:hover {
   background: #f3faf5;
+}
+
+button.row.click-row.rec-list-row {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.rec-list-row-main {
+  min-width: 0;
 }
 
 .detail-row td {

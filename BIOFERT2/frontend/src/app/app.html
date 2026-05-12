@@ -926,6 +926,45 @@
         </section>
       }
 
+      @if (screen() === 'recomendaciones' && selectedFarmId() !== null) {
+        <section class="card">
+          <div class="report-head">
+            <div>
+              <h3 style="margin:0;">Recomendaciones</h3>
+              <p style="margin:4px 0 0 0;">Acciones sugeridas para tu finca y su seguimiento.</p>
+            </div>
+          </div>
+
+          <div class="filters" role="group" aria-label="Filtrar por estado">
+            <button type="button" class="tab" [class.active]="recListFilter() === 'todas'" (click)="setRecListFilter('todas')">Todas</button>
+            <button type="button" class="tab" [class.active]="recListFilter() === 'aplicada'" (click)="setRecListFilter('aplicada')">Implementadas</button>
+            <button type="button" class="tab" [class.active]="recListFilter() === 'pendiente'" (click)="setRecListFilter('pendiente')">Pendientes</button>
+            <button type="button" class="tab" [class.active]="recListFilter() === 'descartada'" (click)="setRecListFilter('descartada')">Descartadas</button>
+          </div>
+
+          <div class="list" style="margin-top:12px;">
+            @for (r of filteredFarmRecommendations(); track r.farm_rec_id) {
+              <button type="button" class="row click-row rec-list-row" (click)="openFarmRecDetail(r.farm_rec_id)">
+                <div class="rec-list-row-main">
+                  <div class="row-title">{{ r.title }}</div>
+                  <div class="row-sub">
+                    Dificultad: {{ difficultyLabel(r.difficulty) }}
+                    @if (r.expected_reduction_pct != null) {
+                      · Reducción estimada: -{{ r.expected_reduction_pct }}% CH₄
+                    }
+                  </div>
+                </div>
+                <div class="row-right">
+                  <span [class]="recStatusBadgeClasses(r.status)">{{ recStatusLabel[r.status] }}</span>
+                </div>
+              </button>
+            } @empty {
+              <div class="muted">No hay recomendaciones para este filtro.</div>
+            }
+          </div>
+        </section>
+      }
+
       @if (screen() === 'perfil') {
         <section class="card">
           <div class="profile-head">
@@ -1011,6 +1050,10 @@
         <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14zm4-2h2V9H8zm4 0h2V7h-2zm4 0h2v-5h-2z"></path></svg>
         <span>Reportes</span>
       </button>
+      <button type="button" class="nav-item" [class.active]="screen() === 'recomendaciones'" (click)="navigate('recomendaciones')">
+        <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21c0 .6.4 1 1 1h4c.6 0 1-.4 1-1v-1H9v1zm3-19C7.5 2 5 4.5 5 8c0 3.1 2 5.7 4.7 6.5V19h4.6v-4.5C17 13.7 19 11.1 19 8c0-3.5-2.5-6-7-6z"></path></svg>
+        <span>Recomendaciones</span>
+      </button>
       <button type="button" class="nav-item" [class.active]="screen() === 'perfil'" (click)="navigate('perfil')">
         <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4.4 0-8 2.2-8 5v2h16v-2c0-2.8-3.6-5-8-5z"></path></svg>
         <span>Perfil</span>
@@ -1018,6 +1061,49 @@
     </nav>
   </div>
   }
+}
+
+@if (activeFarmRecommendationDetail(); as rd) {
+  <div class="modal-backdrop" (click)="closeFarmRecDetail()">
+    <div class="modal modal--rec-ai card" (click)="$event.stopPropagation()" role="dialog" aria-modal="true" aria-labelledby="rec-detail-title">
+      <h3 id="rec-detail-title" style="margin-top:0;">{{ rd.title }}</h3>
+      <p class="muted" style="margin-bottom:10px;">
+        <span [class]="recStatusBadgeClasses(rd.status)">{{ recStatusLabel[rd.status] }}</span>
+        · Dificultad: {{ difficultyLabel(rd.difficulty) }}
+        @if (rd.expected_reduction_pct != null) {
+          · Reducción estimada (ficha): -{{ rd.expected_reduction_pct }}% CH₄
+        }
+      </p>
+      <div class="rec-detail-meta muted" style="font-size:12px; margin-bottom:4px;">
+        Asignada el {{ rd.created_at | date: 'medium' }} · ID ficha finca #{{ rd.farm_rec_id }} · Recomendación catálogo #{{ rd.recommendation_id }}
+      </div>
+
+      <div class="rec-ai-wrap">
+        @for (block of farmRecommendationAiNarrative(rd); track block.heading) {
+          <section class="rec-ai-block">
+            <h4 class="rec-ai-h">{{ block.heading }}</h4>
+            @for (p of block.paragraphs; track $index) {
+              <p class="rec-ai-p">{{ p }}</p>
+            }
+            @if (block.list) {
+              <ul class="rec-ai-ul">
+                @for (item of block.list; track $index) {
+                  <li>{{ item }}</li>
+                }
+              </ul>
+            }
+          </section>
+        }
+      </div>
+
+      <p class="muted rec-ai-disclaimer" style="font-size:11px; margin:10px 0 0 0;">
+        Texto generado en plataforma a partir de sus datos de predio, sensores y emisiones; las órdenes de magnitud son orientativas y no sustituyen dictamen zootécnico ni de certificación.
+      </p>
+      <div class="modal-actions">
+        <button class="btn primary" type="button" (click)="closeFarmRecDetail()">Cerrar</button>
+      </div>
+    </div>
+  </div>
 }
 
 @if (showCredentialsEditor()) {

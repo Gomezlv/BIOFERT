@@ -66,6 +66,7 @@ describe('App', () => {
       revenueAccumUsd: 0,
       co2eqByMonth: [],
     });
+    httpMock.expectOne('http://localhost:3000/api/recommendations?farmId=1').flush([]);
     httpMock.verify();
 
     const compiled = fixture.nativeElement as HTMLElement;

@@ -13,8 +13,11 @@ import {
   AdminUserImpact,
   AdminUserRow,
   ApiService,
+  Difficulty,
   Farm,
+  FarmRecommendationRow,
   Profile,
+  RecStatus,
   Reports,
   Sensor,
 } from './api.service';
@@ -99,7 +102,7 @@ export class App implements OnInit {
     production_model: [''],
   });
 
-  protected readonly screen = signal<'inicio' | 'sensores' | 'reportes' | 'perfil'>('inicio');
+  protected readonly screen = signal<'inicio' | 'sensores' | 'reportes' | 'recomendaciones' | 'perfil'>('inicio');
 
   protected readonly layoutMode = signal<'admin' | 'ganadero'>('ganadero');
   protected readonly adminTab = signal<AdminTab>('panel');
@@ -143,6 +146,10 @@ export class App implements OnInit {
 
   protected readonly sensors = signal<Sensor[]>([]);
   protected readonly reports = signal<Reports | null>(null);
+  protected readonly farmRecommendations = signal<FarmRecommendationRow[]>([]);
+  protected readonly selectedFarmRecDetailId = signal<number | null>(null);
+  /** Filtro de lista en la pestaña Recomendaciones (aplicada = implementada en UI). */
+  protected readonly recListFilter = signal<'todas' | 'pendiente' | 'aplicada' | 'descartada'>('todas');
 
   protected readonly dashboard = signal<{
     alertSensor: { code: string; zone: string; ch4_ppm: number | null; threshold_ppm: number } | null;
@@ -157,6 +164,19 @@ export class App implements OnInit {
   protected readonly sensorFilter = signal<'todos' | 'activo' | 'alerta' | 'inactivo'>('todos');
 
   protected readonly selectedFarm = computed(() => this.farms().find(f => f.id === this.selectedFarmId()) ?? null);
+
+  protected readonly filteredFarmRecommendations = computed(() => {
+    const f = this.recListFilter();
+    const list = this.farmRecommendations();
+    if (f === 'todas') return list;
+    return list.filter(r => r.status === f);
+  });
+
+  protected readonly activeFarmRecommendationDetail = computed(() => {
+    const id = this.selectedFarmRecDetailId();
+    if (id == null) return null;
+    return this.farmRecommendations().find(r => r.farm_rec_id === id) ?? null;
+  });
 
   /** Panel admin: conteo de sensores por estado */
   protected readonly adminPanelSensorCounts = computed(() => {
@@ -492,6 +512,8 @@ export class App implements OnInit {
           this.dashboard.set(null);
           this.sensors.set([]);
           this.reports.set(null);
+          this.farmRecommendations.set([]);
+          this.selectedFarmRecDetailId.set(null);
           this.loadAdminData();
         } else {
           this.layoutMode.set('ganadero');
@@ -588,6 +610,8 @@ export class App implements OnInit {
     this.dashboard.set(null);
     this.sensors.set([]);
     this.reports.set(null);
+    this.farmRecommendations.set([]);
+    this.selectedFarmRecDetailId.set(null);
     this.screen.set('inicio');
     this.loadAdminData();
   }
@@ -602,6 +626,8 @@ export class App implements OnInit {
     this.dashboard.set(null);
     this.sensors.set([]);
     this.reports.set(null);
+    this.farmRecommendations.set([]);
+    this.selectedFarmRecDetailId.set(null);
     this.layoutMode.set('ganadero');
     this.previewOwnerLabel.set(null);
     this.adminLoadError.set(null);
@@ -681,6 +707,8 @@ export class App implements OnInit {
     this.dashboard.set(null);
     this.sensors.set([]);
     this.reports.set(null);
+    this.farmRecommendations.set([]);
+    this.selectedFarmRecDetailId.set(null);
     this.screen.set('inicio');
     this.layoutMode.set('ganadero');
     this.previewOwnerLabel.set(null);
@@ -864,8 +892,11 @@ export class App implements OnInit {
       });
   }
 
-  protected navigate(id: 'inicio' | 'sensores' | 'reportes' | 'perfil') {
+  protected navigate(id: 'inicio' | 'sensores' | 'reportes' | 'recomendaciones' | 'perfil') {
     this.screen.set(id);
+    if (id !== 'recomendaciones') {
+      this.selectedFarmRecDetailId.set(null);
+    }
   }
 
   protected selectFarm(farmId: number): void {
@@ -1068,6 +1099,10 @@ export class App implements OnInit {
     );
     this.api.listSensors(farmId).subscribe(rows => this.sensors.set(rows));
     this.api.reports(farmId).subscribe(r => this.reports.set(r));
+    this.api.listRecommendations(farmId).subscribe({
+      next: rows => this.farmRecommendations.set(rows),
+      error: () => this.farmRecommendations.set([]),
+    });
   }
 
   protected onFarmSelect(nextFarmId: number) {
@@ -1083,11 +1118,188 @@ export class App implements OnInit {
     this.navigate('inicio');
   }
 
-  protected readonly recStatusLabel: Record<string, string> = {
+  protected readonly recStatusLabel: Record<RecStatus, string> = {
     pendiente: 'Pendiente',
-    aplicada: 'Aplicada',
+    aplicada: 'Implementada',
     descartada: 'Descartada',
   };
+
+  protected setRecListFilter(f: 'todas' | 'pendiente' | 'aplicada' | 'descartada'): void {
+    this.recListFilter.set(f);
+  }
+
+  protected openFarmRecDetail(farmRecId: number): void {
+    this.selectedFarmRecDetailId.set(farmRecId);
+  }
+
+  protected closeFarmRecDetail(): void {
+    this.selectedFarmRecDetailId.set(null);
+  }
+
+  protected difficultyLabel(d: Difficulty): string {
+    const m: Record<Difficulty, string> = { facil: 'Fácil', media: 'Media', alta: 'Alta' };
+    return m[d] ?? d;
+  }
+
+  protected recStatusBadgeClasses(status: RecStatus): string {
+    const suf = status === 'pendiente' ? 'pending' : status === 'aplicada' ? 'applied' : 'rejected';
+    return `badge ${suf}`;
+  }
+
+  /** Bloques de texto estilo “respuesta de IA” con cifras del predio y del tablero. */
+  protected farmRecommendationAiNarrative(rd: FarmRecommendationRow): { heading: string; paragraphs: string[]; list?: string[] }[] {
+    const farm = this.selectedFarm();
+    const dash = this.dashboard();
+    const sensors = this.sensors();
+    const heads = Math.max(1, farm?.heads_active ?? dash?.headsActive ?? 1);
+    const areaHa =
+      farm?.area_ha != null && !Number.isNaN(Number(farm.area_ha)) ? Number(farm.area_ha) : null;
+    const name = farm?.name?.trim() || 'Tu finca';
+    const loc = farm?.location?.trim();
+    const breeds = farm?.breeds_text?.trim();
+    const model = farm?.production_model?.trim();
+    const pctRaw = rd.expected_reduction_pct != null ? Number(rd.expected_reduction_pct) : NaN;
+    const pctDisp = Number.isFinite(pctRaw) ? pctRaw : 12;
+    const emissionsToday = dash?.emissionsTodayKg ?? 0;
+    const em24 = dash?.emissions24h ?? [];
+    const sum24 = em24.reduce((a, x) => a + x.kg_ch4, 0);
+    const avgHourly = em24.length > 0 ? sum24 / em24.length : emissionsToday > 0 ? emissionsToday / 24 : 0;
+    const baselineDaily = emissionsToday > 0 ? emissionsToday : avgHourly * 24;
+    const deltaCh4 = baselineDaily * (pctDisp / 100);
+    const co2eqKgDay = deltaCh4 * 28;
+
+    const locPhrase = loc ? ` (${loc})` : '';
+    const pilotHeads = Math.max(12, Math.min(heads, Math.round(heads * (0.13 + (rd.farm_rec_id % 7) * 0.015))));
+    const pilotPct = (pilotHeads / heads) * 100;
+    const phaseDays = 18 + (rd.recommendation_id % 14);
+    const reviewDays = 7 + (rd.farm_rec_id % 5);
+    const doseNote = rd.notes?.trim();
+    const m2PerHead =
+      areaHa != null && areaHa > 0 ? Math.round(((areaHa * 10000) / heads) * 10) / 10 : null;
+    const alertSensors = sensors.filter(s => s.status === 'alerta').length;
+    const fmt = (n: number, d = 2) =>
+      Number.isFinite(n) ? n.toLocaleString('es-CO', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—';
+
+    const ctx: string[] = [];
+    ctx.push(
+      `Se analiza la recomendación «${rd.title}» aplicada a ${name}${locPhrase}, con ${heads.toLocaleString('es-CO')} cabezas registradas en el sistema.`
+    );
+    if (areaHa != null) {
+      ctx.push(
+        `Superficie declarada: ${fmt(areaHa, 1)} ha` +
+          (m2PerHead != null ? ` (aprox. ${fmt(m2PerHead, 1)} m²/cabeza a campo).` : '.')
+      );
+    }
+    if (breeds) ctx.push(`Composición racial declarada: ${breeds}.`);
+    if (model) ctx.push(`Modelo productivo: ${model}.`);
+
+    const paramList: string[] = [
+      `Cabezas de referencia para el cálculo: ${heads.toLocaleString('es-CO')}.`,
+      `Lote piloto sugerido (antes de escalar al 100%): ${pilotHeads.toLocaleString('es-CO')} animales (${fmt(pilotPct, 1)} % del rodeo).`,
+      `Ventana de implementación tipo: ${phaseDays} días de fase activa + ${reviewDays} días de revisión nutricional o de manejo.`,
+      `Dificultad operativa calificada como ${this.difficultyLabel(rd.difficulty)} (ajuste de mano de obra, infraestructura y riesgo de desviación).`,
+    ];
+    if (doseNote) {
+      paramList.unshift(`Parámetro o nota técnica del catálogo: ${doseNote}.`);
+    } else {
+      paramList.push(
+        `No hay una dosis escrita en el catálogo para esta ficha: conviene acordar materia seca, consumo y forraje disponible con un asesor zootécnico antes de fijar gramos por cabeza.`
+      );
+    }
+
+    const impact: string[] = [];
+    impact.push(
+      `La ficha indica una reducción relativa de emisiones de metano entérico del orden del ${fmt(pctDisp, 2)} % respecto al escenario base, manteniendo el resto de variables de producción estables.`
+    );
+    if (baselineDaily > 0) {
+      impact.push(
+        `Tomando como referencia las emisiones agregadas del predio (${fmt(baselineDaily, 2)} kg CH₄/día ` +
+          `${emissionsToday > 0 ? 'según el acumulado «hoy» del tablero' : 'estimadas a partir del promedio horario de las últimas 24 h'}), ` +
+          `una fracción del ${fmt(pctDisp, 2)} % se traduce en un orden de magnitud de ${fmt(deltaCh4, 3)} kg CH₄/día evitados en ese mismo baseline.`
+      );
+      impact.push(
+        `A título ilustrativo (factor GWP₁₀₀ de 28 kg CO₂eq por kg CH₄, simplificado para comunicación), sería del orden de ${fmt(co2eqKgDay, 1)} kg CO₂eq/día asociados a esa misma fracción de metano.`
+      );
+    } else {
+      impact.push(
+        `Aún no hay una línea base de kg CH₄/día suficientemente estable en el tablero; cuando existan series de 24 h o el acumulado diario, se podrá acotar el ahorro absoluto en kg CH₄/día y no solo el porcentaje (${fmt(pctDisp, 2)} %).`
+      );
+    }
+
+    const monitorList: string[] = [
+      `Sensores activos en la finca: ${sensors.length}${sensors.length ? ` (${alertSensors} en alerta)` : ''}.`,
+      `Registrar consumo de materia seca (kg/cabeza/día) y condición corporal al inicio, a mitad y al cierre de los ${phaseDays} días.`,
+      `Contrastar lecturas de CH₄ cercanas a comederos o corrales con el patrón horario habitual (${em24.length ? `${em24.length} puntos en la curva de 24 h` : 'sin curva de 24 h cargada aún'}).`,
+    ];
+    if (sum24 > 0 && em24.length) {
+      monitorList.push(
+        `Promedio horario reciente (serie cargada): ${fmt(avgHourly, 3)} kg CH₄/h (suma 24 h ≈ ${fmt(sum24, 2)} kg CH₄).`
+      );
+    }
+
+    const risk: string[] = [];
+    if (rd.difficulty === 'alta') {
+      risk.push(
+        `Intervención alta en complejidad: riesgo elevado de sobrepastoreo, estrés térmico o heterogeneidad entre animales si no se segmentan lotes homogéneos.`
+      );
+    } else if (rd.difficulty === 'media') {
+      risk.push(
+        `Complejidad media: el principal riesgo suele ser la variación de la dieta entre días; conviene protocolizar mezclado y orden de ingesta.`
+      );
+    } else {
+      risk.push(
+        `Complejidad baja relativa, pero sigue siendo necesario documentar el cambio (lotes, fechas, producto y responsable) para trazabilidad ante auditoría.`
+      );
+    }
+    risk.push(
+      `Estado actual de la recomendación en plataforma: ${this.recStatusLabel[rd.status]}. ` +
+        (rd.status === 'pendiente'
+          ? 'Si se implementa, registre evidencias (pesajes, raciones, fotos de mezclado) antes de marcar cierre en su flujo interno.'
+          : rd.status === 'aplicada'
+            ? 'Figura como implementada: revise que el monitoreo post-intervención confirme la tendencia esperada en las series.'
+            : 'Figura como descartada: conserve el motivo (costo, logística, rechazo al consumo) para futuras priorizaciones.')
+    );
+
+    const blocks: { heading: string; paragraphs: string[]; list?: string[] }[] = [
+      { heading: 'Contexto del predio (datos operativos)', paragraphs: ctx },
+      {
+        heading: 'Síntesis técnica (modelo asistido)',
+        paragraphs: [
+          `La recomendación «${rd.title}» se alinea con prácticas de mitigación de metano ruminal descritas en literatura técnica y en fichas de intervención. ` +
+            `El objetivo es reducir la intensidad de emisión (CH₄ por unidad de producto o por día) sin comprometer de forma inaceptable el desempeño productivo, ` +
+            `priorizando el lote piloto de ${pilotHeads} cabezas y escalando solo tras ${reviewDays} días de evaluación intermedia.`,
+        ],
+      },
+      { heading: 'Parámetros cuantitativos propuestos', paragraphs: [], list: paramList },
+      { heading: 'Impacto esperado (orden de magnitud)', paragraphs: impact },
+      { heading: 'Vigilancia y métricas concretas', paragraphs: [], list: monitorList },
+      { heading: 'Riesgos, condicionantes y seguimiento', paragraphs: risk },
+    ];
+
+    if (doseNote) {
+      const m = doseNote.match(/(\d+(?:[.,]\d+)?)\s*mg\s*\/\s*cabeza/i);
+      let extraPara = '';
+      if (m) {
+        const mg = Number(String(m[1]).replace(',', '.'));
+        if (Number.isFinite(mg) && mg > 0) {
+          const mgPilotDay = mg * pilotHeads;
+          const mgHerdDay = mg * heads;
+          extraPara =
+            ` Si se adopta de forma literal la dosis de ${fmt(mg, 0)} mg/cabeza/día indicada en catálogo, el lote piloto de ${pilotHeads} cabezas representaría un consumo agregado aproximado de ${fmt(mgPilotDay, 0)} mg/día de principio activo a nivel de grupo (≈ ${fmt(mgPilotDay / 1000, 2)} g/día), frente a ${fmt(mgHerdDay, 0)} mg/día (≈ ${fmt(mgHerdDay / 1000, 2)} g/día) si se escalara al 100 % del rodeo (${heads} cabezas). ` +
+            `Estas cifras sirven para dimensionar pedidos, mezclas en planta y controles de inventario; la dosificación final debe validarse con el nutricionista según materia seca real ingerida.`;
+        }
+      }
+      blocks.push({
+        heading: 'Especificación del catálogo y lectura operativa',
+        paragraphs: [
+          `El sistema conserva la siguiente anotación asociada a la ficha de catálogo: «${doseNote}». ` +
+            `Crúcela con el plan de alimentación real (forraje, concentrado, minerales, agua y sales) y con el registro de consumo por lote antes de ejecutar en campo.${extraPara}`,
+        ],
+      });
+    }
+
+    return blocks;
+  }
 
   protected readonly formatUsd = (n: number) =>
     new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
