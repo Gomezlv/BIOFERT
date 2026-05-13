@@ -1,4 +1,4 @@
-/* Estilos simples para demo (sin frameworks) */
+/* Estilos de la aplicación */
 :host {
   display: block;
   height: 100%;
@@ -570,6 +570,11 @@ label {
   background: #e6f7ed;
   border-color: #86d8a4;
   color: #1f6b3a;
+}
+.badge.tracking {
+  background: #e8f0ff;
+  border-color: #9bb8e8;
+  color: #1a3d7a;
 }
 .badge.rejected {
   background: #f7f0f0;
@@ -1253,16 +1258,15 @@ svg .marker-peak {
 .admin-stack-seg {
   height: 100%;
   min-width: 3px;
-  transition: width 0.2s ease;
 }
 .admin-stack-seg.seg-activo {
-  background: linear-gradient(180deg, #3a9a63, #2d7a4f);
+  background: #2d7a4f;
 }
 .admin-stack-seg.seg-alerta {
-  background: linear-gradient(180deg, #e8a030, #c97800);
+  background: #c97800;
 }
 .admin-stack-seg.seg-inactivo {
-  background: linear-gradient(180deg, #b8c4bb, #8a9a8e);
+  background: #8a9a8e;
 }
 .admin-legend-row {
   display: flex;
@@ -1315,19 +1319,18 @@ svg .marker-peak {
 .admin-hbar-fill {
   height: 100%;
   border-radius: 6px;
-  transition: width 0.25s ease;
 }
 .admin-hbar-fill.gan {
-  background: linear-gradient(90deg, #2d7a4f, #4caf7a);
+  background: #2d7a4f;
 }
 .admin-hbar-fill.adm {
-  background: linear-gradient(90deg, #1a5c8a, #3d8fc7);
+  background: #1a5c8a;
 }
 .admin-hbar-fill.co2 {
-  background: linear-gradient(90deg, #1f6b3a, #5bbd7a);
+  background: #2d7a4f;
 }
 .admin-hbar-fill.heads {
-  background: linear-gradient(90deg, #0f4d32, #2d7a4f);
+  background: #2d7a4f;
 }
 .admin-dual-num {
   text-align: right;
@@ -1359,6 +1362,30 @@ svg .marker-peak {
   color: #0f2b1a;
   font-size: 12px;
 }
+
+.admin-sensor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
+  margin: 12px 0 14px 0;
+}
+.admin-sensor-toolbar .filters {
+  margin-top: 0;
+}
+.admin-sensor-farm-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #246040;
+}
+.admin-sensor-toolbar select.input {
+  min-width: 200px;
+  max-width: min(100%, 360px);
+}
+
 .admin-alert-card {
   border-color: #e8d4c4;
   background: linear-gradient(180deg, #fffdfb 0%, #ffffff 100%);
@@ -1423,15 +1450,37 @@ svg .marker-peak {
   color: #a65a00;
 }
 
-/* Barra inferior compartida: admin (6 ítems) y usuario (5 ítems) */
-.app-bottom-tabs--admin {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+/* Barra inferior admin: todas las pestañas en una sola fila (7 ítems) */
+.bottom-nav.app-bottom-tabs--admin {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  justify-content: stretch;
+  gap: 4px;
+  padding-left: 6px;
+  padding-right: 6px;
 }
 
-@media (min-width: 720px) {
-  .app-bottom-tabs--admin {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-  }
+.app-bottom-tabs--admin .nav-item {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: clamp(8px, 2.1vw, 11px);
+  padding: 7px 2px;
+  border-radius: 10px;
+}
+
+.app-bottom-tabs--admin .nav-ico {
+  width: clamp(14px, 3.5vw, 18px);
+  height: clamp(14px, 3.5vw, 18px);
+  flex-shrink: 0;
+}
+
+.app-bottom-tabs--admin .nav-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .app-bottom-tabs--user {
@@ -1560,4 +1609,154 @@ button.row.click-row.rec-list-row {
 
 .tiny {
   font-size: 11px;
+}
+
+/* Configuración administrador: layout enriquecido */
+.admin-config-card {
+  max-width: 720px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.admin-config-layout {
+  display: grid;
+  gap: 18px;
+  margin-top: 16px;
+}
+
+@media (min-width: 640px) {
+  .admin-config-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    align-items: start;
+  }
+}
+
+.admin-config-profile-block {
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid #d4eadc;
+  background: linear-gradient(165deg, #f7fcfa 0%, #eef6f1 100%);
+}
+
+.admin-config-profile-head {
+  margin-bottom: 14px;
+}
+
+.admin-config-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.admin-config-section {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid #e5f2e8;
+  background: #fbfffc;
+}
+
+.admin-config-h {
+  margin: 0 0 4px 0;
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f2b1a;
+}
+
+.admin-config-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (min-width: 520px) {
+  .admin-config-quick-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.admin-quick-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 10px;
+  border-radius: 12px;
+  border: 1px solid #c8e0ce;
+  background: #ffffff;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: #246040;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.admin-quick-tile:hover {
+  background: #f0faf4;
+  border-color: #9bc9ad;
+  box-shadow: 0 2px 8px rgba(15, 43, 26, 0.06);
+}
+
+.admin-quick-tile.active {
+  background: #e8f5ed;
+  border-color: #2d7a4f;
+  box-shadow: inset 0 0 0 1px rgba(45, 122, 79, 0.25);
+}
+
+.admin-quick-tile-title {
+  font-weight: 800;
+  font-size: 12px;
+  color: #0f2b1a;
+}
+
+.admin-quick-tile-sub {
+  font-size: 10px;
+  font-weight: 700;
+  color: #5a7a66;
+}
+
+.admin-config-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (min-width: 400px) {
+  .admin-config-kpis {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.admin-config-kpi {
+  padding: 10px 8px;
+  border-radius: 10px;
+  background: #f3faf6;
+  border: 1px solid #d4eadc;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-config-kpi--warn {
+  background: #fff8f0;
+  border-color: #f0d4a8;
+}
+
+.admin-config-kpi-lbl {
+  font-size: 10px;
+  font-weight: 800;
+  color: #5a7a66;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.admin-config-kpi-val {
+  font-size: 18px;
+  font-weight: 900;
+  color: #0f2b1a;
+  line-height: 1.1;
+}
+
+.admin-config-kpi--warn .admin-config-kpi-val {
+  color: #8a4a00;
 }

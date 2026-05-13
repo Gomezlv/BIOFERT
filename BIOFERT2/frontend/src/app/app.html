@@ -120,7 +120,7 @@
             <div class="admin-panel-grid">
               <section class="card">
                 <h3>Resumen operativo</h3>
-                <p class="muted">Indicadores globales de la plataforma (demo).</p>
+                <p class="muted">Indicadores globales de la plataforma.</p>
                 <div class="kpis admin-panel-kpis">
                   <div class="kpi">
                     <div class="kpi-lbl">Usuarios</div>
@@ -264,8 +264,13 @@
           }
           @case ('usuarios') {
             <section class="card">
-              <h3>Usuarios</h3>
-              <p class="muted">Clic en la fila para ver metano reducido (estimado), bonos y auditoría. Use Editar para modificar o eliminar.</p>
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+                <div>
+                  <h3 style="margin:0;">Usuarios y roles</h3>
+                  <p class="muted" style="margin:4px 0 0 0;">Crear, editar, suspender cuentas; asignar tipo de cuenta y permisos de predio desde Fincas.</p>
+                </div>
+                <button class="btn primary tiny" type="button" (click)="openAdminCreateUser()">Nuevo usuario</button>
+              </div>
               <div class="table-scroll">
                 <table class="data-table">
                   <thead>
@@ -274,6 +279,7 @@
                       <th>Nombre</th>
                       <th>Email</th>
                       <th>Cuenta</th>
+                      <th>Estado</th>
                       <th>Fincas</th>
                       <th>Acciones</th>
                     </tr>
@@ -285,6 +291,7 @@
                         <td>{{ u.full_name }}</td>
                         <td>{{ u.email ?? '—' }}</td>
                         <td>{{ u.account_type ?? 'ganadero' }}</td>
+                        <td>{{ u.account_status ?? 'active' }}</td>
                         <td>{{ u.farm_count }}</td>
                         <td (click)="$event.stopPropagation()">
                           <button class="btn tiny" type="button" (click)="openAdminUserEditor(u, $event)">Editar</button>
@@ -292,7 +299,7 @@
                       </tr>
                       @if (expandedAdminUserId() === u.id) {
                         <tr class="detail-row">
-                          <td colspan="6">
+                          <td colspan="7">
                             @if (adminUserDetailBusy()) {
                               <div class="muted">Cargando…</div>
                             } @else if (adminUserImpact(); as imp) {
@@ -362,7 +369,6 @@
           @case ('fincas') {
             <section class="card">
               <h3>Fincas</h3>
-              <p class="muted">Clic en la fila para mapa y gráfica de CO₂eq por mes.</p>
               <div class="table-scroll">
                 <table class="data-table">
                   <thead>
@@ -397,9 +403,9 @@
                                   <iframe class="map-frame" [src]="mapUrl" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
                                 </div>
                               } @else {
-                                <p class="muted">Mapa no disponible (configure GOOGLE_MAPS_API_KEY).</p>
+                                <p class="muted">Mapa no disponible.</p>
                               }
-                              <h4 style="margin:14px 0 8px 0;">CO₂eq reducido por mes (metano / bonos en app ganadero)</h4>
+                              <h4 style="margin:14px 0 8px 0;">CO₂eq reducido por mes</h4>
                               <div class="bar-chart admin-mini-chart">
                                 @for (b of co2eqBarsFromSeries(adminFarmReportsExtra()?.co2eqByMonth ?? []); track b.month) {
                                   <div class="bar-col">
@@ -411,6 +417,35 @@
                                   <div class="muted">Sin datos mensuales.</div>
                                 }
                               </div>
+                              <h4 style="margin:14px 0 6px 0;">Accesos delegados al predio</h4>
+                              @if (farmAccessBusy()) {
+                                <p class="muted tiny">Cargando permisos…</p>
+                              } @else {
+                                <div class="table-scroll">
+                                  <table class="data-table">
+                                    <thead>
+                                      <tr>
+                                        <th>Usuario</th>
+                                        <th>Permiso</th>
+                                        <th></th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      @for (a of farmAccessByFarmId()[f.id] ?? []; track a.id) {
+                                        <tr>
+                                          <td>{{ a.full_name }}<br /><span class="muted tiny">{{ a.email }}</span></td>
+                                          <td>{{ a.permission_level }}</td>
+                                          <td>
+                                            <button class="btn tiny danger" type="button" (click)="revokeFarmAccess(f.id, a.id)">Quitar</button>
+                                          </td>
+                                        </tr>
+                                      } @empty {
+                                        <tr><td colspan="3" class="muted">Sin accesos delegados.</td></tr>
+                                      }
+                                    </tbody>
+                                  </table>
+                                </div>
+                              }
                             }
                           </td>
                         </tr>
@@ -424,6 +459,27 @@
           @case ('sensores') {
             <section class="card">
               <h3>Sensores (todas las fincas)</h3>
+              <div class="admin-sensor-toolbar">
+                <div class="filters" role="group" aria-label="Filtrar por estado">
+                  <button type="button" class="filter-btn" [class.active]="adminSensorStatusFilter() === 'todos'" (click)="setAdminSensorStatusFilter('todos')">Todos</button>
+                  <button type="button" class="filter-btn" [class.active]="adminSensorStatusFilter() === 'activo'" (click)="setAdminSensorStatusFilter('activo')">Activo</button>
+                  <button type="button" class="filter-btn" [class.active]="adminSensorStatusFilter() === 'alerta'" (click)="setAdminSensorStatusFilter('alerta')">Alerta</button>
+                  <button type="button" class="filter-btn" [class.active]="adminSensorStatusFilter() === 'inactivo'" (click)="setAdminSensorStatusFilter('inactivo')">Inactivo</button>
+                </div>
+                <label class="admin-sensor-farm-label">
+                  Finca
+                  <select
+                    class="input"
+                    [value]="adminSensorFarmSelectValue()"
+                    (change)="onAdminSensorFarmFilterChange($event)"
+                  >
+                    <option value="">Todas las fincas</option>
+                    @for (o of adminSensorFarmSelectOptions(); track o.id) {
+                      <option [value]="o.id">{{ o.name }}</option>
+                    }
+                  </select>
+                </label>
+              </div>
               <div class="table-scroll">
                 <table class="data-table">
                   <thead>
@@ -437,7 +493,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    @for (s of adminSensors(); track s.id) {
+                    @for (s of filteredAdminSensors(); track s.id) {
                       <tr [class]="'sensor-status-row sensor-status-row--' + s.status">
                         <td>{{ s.code }}</td>
                         <td>{{ s.zone }}</td>
@@ -445,6 +501,10 @@
                         <td>{{ s.farm_name }}<br /><span class="muted tiny">{{ s.owner_email }}</span></td>
                         <td>{{ s.last_ch4_ppm ?? '—' }}</td>
                         <td class="tiny">{{ s.last_recorded_at ? (s.last_recorded_at | date: 'short') : '—' }}</td>
+                      </tr>
+                    } @empty {
+                      <tr>
+                        <td colspan="6" class="muted">Ningún sensor coincide con los filtros seleccionados.</td>
                       </tr>
                     }
                   </tbody>
@@ -455,7 +515,7 @@
           @case ('reportes') {
             <section class="card">
               <h3>Reportes y certificación por finca</h3>
-              <p class="muted">Totales globales y avance del certificado (demo).</p>
+              <p class="muted">Totales globales y avance de certificación por finca.</p>
               <div class="kpis">
                 <div class="kpi">
                   <div class="kpi-lbl">t CO₂eq acum.</div>
@@ -501,22 +561,121 @@
               }
             </section>
           }
-          @case ('config') {
+          @case ('catalogo') {
             <section class="card">
-              <h3>Configuración</h3>
-              <div class="profile-head" style="margin-bottom:12px;">
-                <div class="avatar">{{ userInitials() }}</div>
-                <div>
-                  <div class="profile-name">{{ profile()?.user?.full_name ?? '—' }}</div>
-                  <div class="profile-role">{{ profile()?.user?.role ?? '—' }}</div>
-                  <div class="profile-loc">{{ profile()?.user?.email ?? '—' }}</div>
-                  <div class="profile-loc">{{ profile()?.user?.location ?? '—' }}</div>
+              <h3>Catálogo científico de intervenciones</h3>
+              <p class="muted">Cada entrada muestra dosificación, aplicabilidad, referencias, proveedor local, costo estimado y trazabilidad de actualización.</p>
+              <div class="table-scroll">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Título</th>
+                      <th>Tipo</th>
+                      <th>Reducción %</th>
+                      <th>Costo COP</th>
+                      <th>Actualizado</th>
+                      <th>Autor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (c of adminCatalog(); track c.id) {
+                      <tr>
+                        <td>{{ c.id }}</td>
+                        <td>{{ c.title }}</td>
+                        <td>{{ c.intervention_kind ?? '—' }}</td>
+                        <td>{{ c.expected_reduction_pct ?? '—' }}</td>
+                        <td>{{ c.estimated_cost_cop != null ? (c.estimated_cost_cop | number: '1.0-0') : '—' }}</td>
+                        <td class="tiny">{{ c.updated_at | date: 'short' }}</td>
+                        <td class="tiny">{{ c.updated_by_name ?? c.updated_by_email ?? '—' }}</td>
+                      </tr>
+                    } @empty {
+                      <tr><td colspan="7" class="muted">Sin datos de catálogo.</td></tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          }
+          @case ('config') {
+            <section class="card admin-config-card">
+              <h3 style="margin-top:0;">Mi cuenta y centro de control</h3>
+              <p class="muted" style="margin:4px 0 0 0;">
+                Revise su identidad en la plataforma, acceda a los módulos principales y consulte un resumen operativo sin salir de esta pantalla.
+              </p>
+
+              <div class="admin-config-layout">
+                <div class="admin-config-profile-block">
+                  <div class="profile-head admin-config-profile-head">
+                    <div class="avatar">{{ userInitials() }}</div>
+                    <div>
+                      <div class="profile-name">{{ profile()?.user?.full_name ?? '—' }}</div>
+                      <div class="profile-role">{{ profile()?.user?.role ?? '—' }}</div>
+                      <div class="profile-loc">{{ profile()?.user?.email ?? '—' }}</div>
+                      <div class="profile-loc">{{ profile()?.user?.location ?? '—' }}</div>
+                    </div>
+                  </div>
+                  <button class="btn primary" type="button" (click)="openAdminProfileEditor()">Editar perfil de administrador</button>
+                  <p class="muted tiny" style="margin:12px 0 0 0;">
+                    Los cambios de nombre, rol y ubicación se aplican de inmediato a su sesión actual.
+                  </p>
+                </div>
+
+                <div class="admin-config-side">
+                  <div class="admin-config-section">
+                    <h4 class="admin-config-h">Accesos rápidos</h4>
+                    <div class="admin-config-quick-grid">
+                      <button type="button" class="admin-quick-tile" [class.active]="adminTab() === 'panel'" (click)="navigateAdmin('panel')">
+                        <span class="admin-quick-tile-title">Panel</span>
+                        <span class="admin-quick-tile-sub">Resumen global</span>
+                      </button>
+                      <button type="button" class="admin-quick-tile" [class.active]="adminTab() === 'usuarios'" (click)="navigateAdmin('usuarios')">
+                        <span class="admin-quick-tile-title">Usuarios</span>
+                        <span class="admin-quick-tile-sub">Cuentas y roles</span>
+                      </button>
+                      <button type="button" class="admin-quick-tile" [class.active]="adminTab() === 'fincas'" (click)="navigateAdmin('fincas')">
+                        <span class="admin-quick-tile-title">Fincas</span>
+                        <span class="admin-quick-tile-sub">Predios y mapas</span>
+                      </button>
+                      <button type="button" class="admin-quick-tile" [class.active]="adminTab() === 'sensores'" (click)="navigateAdmin('sensores')">
+                        <span class="admin-quick-tile-title">Sensores</span>
+                        <span class="admin-quick-tile-sub">Estado CH₄</span>
+                      </button>
+                      <button type="button" class="admin-quick-tile" [class.active]="adminTab() === 'reportes'" (click)="navigateAdmin('reportes')">
+                        <span class="admin-quick-tile-title">Reportes</span>
+                        <span class="admin-quick-tile-sub">Certificación</span>
+                      </button>
+                      <button type="button" class="admin-quick-tile" [class.active]="adminTab() === 'catalogo'" (click)="navigateAdmin('catalogo')">
+                        <span class="admin-quick-tile-title">Catálogo</span>
+                        <span class="admin-quick-tile-sub">Intervenciones</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="admin-config-section">
+                    <h4 class="admin-config-h">Resumen de plataforma</h4>
+                    <p class="muted tiny" style="margin:0 0 8px 0;">Datos de la última carga (use «Refrescar» en la cabecera para actualizar).</p>
+                    <div class="admin-config-kpis">
+                      <div class="admin-config-kpi">
+                        <span class="admin-config-kpi-lbl">Usuarios</span>
+                        <span class="admin-config-kpi-val">{{ adminOverview()?.user_count ?? '—' }}</span>
+                      </div>
+                      <div class="admin-config-kpi">
+                        <span class="admin-config-kpi-lbl">Fincas</span>
+                        <span class="admin-config-kpi-val">{{ adminOverview()?.farm_count ?? '—' }}</span>
+                      </div>
+                      <div class="admin-config-kpi">
+                        <span class="admin-config-kpi-lbl">Sensores</span>
+                        <span class="admin-config-kpi-val">{{ adminOverview()?.sensor_count ?? '—' }}</span>
+                      </div>
+                      <div class="admin-config-kpi admin-config-kpi--warn">
+                        <span class="admin-config-kpi-lbl">Alertas</span>
+                        <span class="admin-config-kpi-val">{{ adminOverview()?.sensors_alerta ?? '—' }}</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <button class="btn primary" type="button" (click)="openAdminProfileEditor()">Editar perfil de administrador</button>
-              <p style="margin-top:14px;"><span class="muted">API Maps (enmascarada):</span> {{ adminConfig()?.googleMapsApiKeyMasked ?? '—' }}</p>
-              <p><span class="muted">Puerto API:</span> {{ adminConfig()?.port ?? '—' }}</p>
-              <p><span class="muted">Base de datos:</span> {{ adminConfig()?.database ?? '—' }}</p>
             </section>
           }
         }
@@ -542,6 +701,10 @@
         <button type="button" class="nav-item" [class.active]="adminTab() === 'reportes'" (click)="navigateAdmin('reportes')">
           <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14zm4-2h2V9H8zm4 0h2V7h-2zm4 0h2v-5h-2z"></path></svg>
           <span>Reportes</span>
+        </button>
+        <button type="button" class="nav-item" [class.active]="adminTab() === 'catalogo'" (click)="navigateAdmin('catalogo')">
+          <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h10v2H4z"></path></svg>
+          <span>Catálogo</span>
         </button>
         <button type="button" class="nav-item" [class.active]="adminTab() === 'config'" (click)="navigateAdmin('config')">
           <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4.4 0-8 2.2-8 5v2h16v-2c0-2.8-3.6-5-8-5z"></path></svg>
@@ -930,13 +1093,76 @@
         <section class="card">
           <div class="report-head">
             <div>
-              <h3 style="margin:0;">Recomendaciones</h3>
-              <p style="margin:4px 0 0 0;">Acciones sugeridas para tu finca y su seguimiento.</p>
+              <h3 style="margin:0;">Recomendaciones dietéticas</h3>
+              <p style="margin:4px 0 0 0;">Intervenciones del catálogo con ficha técnica; active el seguimiento y registre resultados en el predio.</p>
             </div>
+            <button class="btn tiny" type="button" (click)="loadDietaryRecommendations()" [disabled]="dietaryBusy()">Actualizar</button>
           </div>
 
+          @if (dietaryPlan(); as dp) {
+            @if (!dp.eligible) {
+              <div class="banner err" style="margin-top:10px;">
+                @for (x of dp.reasons; track $index) {
+                  <div>{{ x }}</div>
+                }
+              </div>
+            } @else {
+              <p class="muted tiny" style="margin-top:8px;">
+                Precondiciones cumplidas: {{ dp.preconditions.ch4_distinct_days }} días con datos CH₄ · perfil de predio completo.
+              </p>
+            }
+            <h4 style="margin:14px 0 6px 0;">Catálogo priorizado (mayor reducción estimada primero)</h4>
+            <div class="table-scroll">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Prioridad</th>
+                    <th>Intervención</th>
+                    <th>−% CH₄</th>
+                    <th>Costo est.</th>
+                    <th>En predio</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (it of dp.items; track it.recommendation_id; let idx = $index) {
+                    <tr>
+                      <td>{{ idx + 1 }}</td>
+                      <td>
+                        <strong>{{ it.title }}</strong>
+                        <div class="muted tiny">{{ it.intervention_kind ?? '—' }} · {{ it.local_provider ?? '—' }}</div>
+                      </td>
+                      <td>{{ it.expected_reduction_pct ?? '—' }}</td>
+                      <td>{{ it.estimated_cost_cop != null ? (it.estimated_cost_cop | number: '1.0-0') : '—' }} COP</td>
+                      <td>
+                        @if (it.farm_rec_id && it.farm_status) {
+                          <span [class]="recStatusBadgeClasses(it.farm_status)">{{ recStatusLabel[it.farm_status] }}</span>
+                        } @else {
+                          <span class="muted">—</span>
+                        }
+                      </td>
+                      <td>
+                        @if (dp.eligible && !it.farm_rec_id) {
+                          <button class="btn tiny primary" type="button" (click)="adoptDietaryItem(it)">Añadir al predio</button>
+                        }
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          } @else if (dietaryBusy()) {
+            <p class="muted" style="margin-top:10px;">Cargando plan dietético…</p>
+          }
+
+          @if (interventionUiMessage(); as im) {
+            <div class="banner" [class.err]="im.type === 'err'" [class.ok]="im.type === 'ok'" style="margin-top:10px;">{{ im.text }}</div>
+          }
+
+          <h4 style="margin:18px 0 6px 0;">Mis intervenciones vinculadas</h4>
           <div class="filters" role="group" aria-label="Filtrar por estado">
             <button type="button" class="tab" [class.active]="recListFilter() === 'todas'" (click)="setRecListFilter('todas')">Todas</button>
+            <button type="button" class="tab" [class.active]="recListFilter() === 'en_seguimiento'" (click)="setRecListFilter('en_seguimiento')">Seguimiento</button>
             <button type="button" class="tab" [class.active]="recListFilter() === 'aplicada'" (click)="setRecListFilter('aplicada')">Implementadas</button>
             <button type="button" class="tab" [class.active]="recListFilter() === 'pendiente'" (click)="setRecListFilter('pendiente')">Pendientes</button>
             <button type="button" class="tab" [class.active]="recListFilter() === 'descartada'" (click)="setRecListFilter('descartada')">Descartadas</button>
@@ -951,6 +1177,9 @@
                     Dificultad: {{ difficultyLabel(r.difficulty) }}
                     @if (r.expected_reduction_pct != null) {
                       · Reducción estimada: -{{ r.expected_reduction_pct }}% CH₄
+                    }
+                    @if (r.impact_review_scheduled_at && r.status === 'en_seguimiento') {
+                      · Revisión: {{ r.impact_review_scheduled_at | date: 'short' }}
                     }
                   </div>
                 </div>
@@ -1078,6 +1307,60 @@
         Asignada el {{ rd.created_at | date: 'medium' }} · ID ficha finca #{{ rd.farm_rec_id }} · Recomendación catálogo #{{ rd.recommendation_id }}
       </div>
 
+      <div class="rec-ficha muted" style="font-size:13px; margin-bottom:10px;">
+        <div><strong>Dosificación:</strong> {{ rd.dosage_detail ?? rd.notes ?? '—' }}</div>
+        <div><strong>Proveedor local:</strong> {{ rd.local_provider ?? '—' }}</div>
+        <div><strong>Costo estimado:</strong> {{ formatCop(rd.estimated_cost_cop ?? null) }}</div>
+        <div><strong>Aplicabilidad:</strong> {{ rd.applicability_conditions ?? '—' }}</div>
+        <div><strong>Referencias:</strong> {{ rd.bibliographic_refs ?? '—' }}</div>
+        @if (rd.catalog_updated_at) {
+          <div class="tiny" style="margin-top:6px;">Catálogo actualizado: {{ rd.catalog_updated_at | date: 'medium' }}</div>
+        }
+        @if (rd.status === 'en_seguimiento' && rd.impact_review_scheduled_at) {
+          <div class="tiny"><strong>Revisión de impacto programada:</strong> {{ rd.impact_review_scheduled_at | date: 'medium' }}</div>
+        }
+      </div>
+
+      <div class="modal-actions" style="margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        @if (dietaryPlan()?.eligible && (rd.status === 'pendiente' || rd.status === 'aplicada')) {
+          <button class="btn primary tiny" type="button" (click)="activateTrackingRow(rd)">Activar seguimiento</button>
+        }
+      </div>
+
+      @if (rd.status === 'en_seguimiento') {
+        <div class="card" style="padding:10px; margin-bottom:10px;">
+          <h4 style="margin:0 0 8px 0;">Retroalimentación</h4>
+          @if (feedbackMessage(); as fm) {
+            <div class="banner ok tiny" style="margin-bottom:8px;">{{ fm }}</div>
+          }
+          <form class="form" [formGroup]="interventionFeedbackForm" (ngSubmit)="submitInterventionFeedback(rd)">
+            <div class="report-grid-2">
+              <label>
+                Variación producción (%)
+                <input class="input" type="number" step="0.1" formControlName="production_change_pct" />
+              </label>
+              <label>
+                Costo real (COP)
+                <input class="input" type="number" formControlName="real_cost_cop" />
+              </label>
+            </div>
+            <label>
+              Aceptabilidad del ganado
+              <select class="input" formControlName="livestock_acceptability">
+                <option value="baja">Baja</option>
+                <option value="media">Media</option>
+                <option value="alta">Alta</option>
+              </select>
+            </label>
+            <label>
+              Observaciones
+              <textarea class="input" rows="2" formControlName="observations"></textarea>
+            </label>
+            <button class="btn primary tiny" type="submit" [disabled]="feedbackBusy()">Enviar retroalimentación</button>
+          </form>
+        </div>
+      }
+
       <div class="rec-ai-wrap">
         @for (block of farmRecommendationAiNarrative(rd); track block.heading) {
           <section class="rec-ai-block">
@@ -1097,7 +1380,7 @@
       </div>
 
       <p class="muted rec-ai-disclaimer" style="font-size:11px; margin:10px 0 0 0;">
-        Texto generado en plataforma a partir de sus datos de predio, sensores y emisiones; las órdenes de magnitud son orientativas y no sustituyen dictamen zootécnico ni de certificación.
+        La información se genera a partir de los datos registrados en la plataforma; no sustituye asesoría zootécnica ni certificación oficial.
       </p>
       <div class="modal-actions">
         <button class="btn primary" type="button" (click)="closeFarmRecDetail()">Cerrar</button>
@@ -1243,6 +1526,15 @@
           <select class="input" formControlName="account_type">
             <option value="ganadero">Ganadero</option>
             <option value="admin">Administrador</option>
+            <option value="tecnico">Técnico</option>
+            <option value="veterinario">Veterinario</option>
+          </select>
+        </label>
+        <label>
+          Estado de cuenta
+          <select class="input" formControlName="account_status">
+            <option value="active">Activa</option>
+            <option value="suspended">Suspendida</option>
           </select>
         </label>
         <label>
@@ -1253,6 +1545,52 @@
           <button class="btn danger" type="button" (click)="deleteAdminUserFromEditor()" [disabled]="adminUserEditorBusy()">Eliminar</button>
           <button class="btn" type="button" (click)="closeAdminUserEditor()">Cancelar</button>
           <button class="btn primary" type="submit" [disabled]="adminUserEditorBusy()">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+}
+
+@if (showAdminCreateUser()) {
+  <div class="modal-backdrop" (click)="closeAdminCreateUser()">
+    <div class="modal card" (click)="$event.stopPropagation()">
+      <h3 style="margin-top:0;">Nuevo usuario</h3>
+      @if (adminCreateUserMessage(); as cm) {
+        <div class="banner err">{{ cm }}</div>
+      }
+      <form class="form" [formGroup]="adminCreateUserForm" (ngSubmit)="submitAdminCreateUser()">
+        <label>
+          Nombre completo
+          <input class="input" type="text" formControlName="full_name" />
+        </label>
+        <label>
+          Email
+          <input class="input" type="email" formControlName="email" autocomplete="email" />
+        </label>
+        <label>
+          Contraseña inicial
+          <input class="input" type="password" formControlName="password" autocomplete="new-password" />
+        </label>
+        <label>
+          Rol
+          <input class="input" type="text" formControlName="role" />
+        </label>
+        <label>
+          Ubicación
+          <input class="input" type="text" formControlName="location" />
+        </label>
+        <label>
+          Tipo de cuenta
+          <select class="input" formControlName="account_type">
+            <option value="ganadero">Ganadero</option>
+            <option value="admin">Administrador</option>
+            <option value="tecnico">Técnico</option>
+            <option value="veterinario">Veterinario</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button class="btn" type="button" (click)="closeAdminCreateUser()">Cancelar</button>
+          <button class="btn primary" type="submit" [disabled]="adminCreateUserBusy()">Crear</button>
         </div>
       </form>
     </div>

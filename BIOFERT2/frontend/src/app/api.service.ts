@@ -3,8 +3,13 @@ import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 
 export type SensorStatus = 'activo' | 'alerta' | 'inactivo';
-export type RecStatus = 'pendiente' | 'aplicada' | 'descartada';
+export type RecStatus = 'pendiente' | 'aplicada' | 'descartada' | 'en_seguimiento';
 export type Difficulty = 'facil' | 'media' | 'alta';
+export type AccountType = 'admin' | 'ganadero' | 'tecnico' | 'veterinario';
+export type AccountStatus = 'active' | 'suspended';
+export type InterventionKind = 'aditivo' | 'forraje' | 'practica';
+export type FarmAccessLevel = 'lectura' | 'edicion';
+export type LivestockAcceptability = 'baja' | 'media' | 'alta';
 
 export type Sensor = {
   id: number;
@@ -22,11 +27,79 @@ export type FarmRecommendationRow = {
   farm_id: number;
   status: RecStatus;
   created_at: string;
+  decided_at?: string | null;
+  impact_review_scheduled_at?: string | null;
+  tracking_started_at?: string | null;
   recommendation_id: number;
   title: string;
   expected_reduction_pct: number | null;
   difficulty: Difficulty;
   notes: string | null;
+  intervention_kind?: InterventionKind | null;
+  dosage_detail?: string | null;
+  applicability_conditions?: string | null;
+  bibliographic_refs?: string | null;
+  local_provider?: string | null;
+  estimated_cost_cop?: number | null;
+  catalog_updated_at?: string | null;
+  updated_by_user_id?: number | null;
+};
+
+export type DietaryRecommendationItem = {
+  recommendation_id: number;
+  title: string;
+  expected_reduction_pct: number | null;
+  difficulty: Difficulty;
+  notes: string | null;
+  intervention_kind: InterventionKind | null;
+  dosage_detail: string | null;
+  applicability_conditions: string | null;
+  bibliographic_refs: string | null;
+  local_provider: string | null;
+  estimated_cost_cop: number | null;
+  catalog_updated_at: string | null;
+  updated_by_user_id: number | null;
+  farm_rec_id: number | null;
+  farm_status: RecStatus | null;
+  impact_review_scheduled_at: string | null;
+  tracking_started_at: string | null;
+};
+
+export type DietaryRecommendationsResponse = {
+  farmId: number;
+  eligible: boolean;
+  preconditions: { ch4_distinct_days: number; profile_complete: boolean };
+  reasons: string[];
+  impact_review_days_default: number;
+  items: DietaryRecommendationItem[];
+};
+
+export type InterventionCatalogRow = {
+  id: number;
+  title: string;
+  expected_reduction_pct: number | null;
+  difficulty: Difficulty;
+  notes: string | null;
+  intervention_kind: InterventionKind | null;
+  dosage_detail: string | null;
+  applicability_conditions: string | null;
+  bibliographic_refs: string | null;
+  local_provider: string | null;
+  estimated_cost_cop: number | null;
+  updated_at: string;
+  updated_by_user_id: number | null;
+  updated_by_name?: string | null;
+  updated_by_email?: string | null;
+};
+
+export type FarmAccessRow = {
+  id: number;
+  farm_id: number;
+  user_id: number;
+  permission_level: FarmAccessLevel;
+  created_at: string;
+  email: string | null;
+  full_name: string | null;
 };
 
 export type Farm = {
@@ -43,13 +116,12 @@ export type Farm = {
   certification_step?: number;
 };
 
-export type AccountType = 'admin' | 'ganadero';
-
 export type UserRow = {
   id: number;
   full_name: string;
   role: string;
   account_type?: AccountType;
+  account_status?: AccountStatus;
   location: string | null;
   email: string | null;
   created_at?: string;
@@ -294,10 +366,83 @@ export class ApiService {
       location?: string | null;
       email?: string;
       account_type?: AccountType;
+      account_status?: AccountStatus;
       new_password?: string;
     }
   ): Observable<{ user: UserRow }> {
     return this.http.patch<{ user: UserRow }>(`${this.baseUrl}/admin/users/${userId}`, payload);
+  }
+
+  adminCreateUser(payload: {
+    email: string;
+    password: string;
+    full_name?: string;
+    role?: string;
+    location?: string | null;
+    account_type?: AccountType;
+  }): Observable<{ user: UserRow }> {
+    return this.http.post<{ user: UserRow }>(`${this.baseUrl}/admin/users`, payload);
+  }
+
+  dietaryRecommendations(farmId: number): Observable<DietaryRecommendationsResponse> {
+    return this.http.get<DietaryRecommendationsResponse>(`${this.baseUrl}/dietary-recommendations?farmId=${farmId}`);
+  }
+
+  adoptCatalogIntervention(farmId: number, recommendation_id: number): Observable<Record<string, unknown>> {
+    return this.http.post<Record<string, unknown>>(`${this.baseUrl}/farms/${farmId}/recommendations/adopt`, {
+      recommendation_id,
+    });
+  }
+
+  activateInterventionTracking(farmId: number, farmRecId: number): Observable<{ farm_recommendation: Record<string, unknown>; message: string }> {
+    return this.http.post<{ farm_recommendation: Record<string, unknown>; message: string }>(
+      `${this.baseUrl}/farms/${farmId}/recommendations/${farmRecId}/activate-tracking`,
+      {}
+    );
+  }
+
+  interventionFeedback(
+    farmId: number,
+    farmRecId: number,
+    payload: {
+      production_change_pct?: number | null;
+      real_cost_cop?: number | null;
+      livestock_acceptability: LivestockAcceptability;
+      observations?: string | null;
+    }
+  ): Observable<{ feedback: Record<string, unknown>; model_training_note: string }> {
+    return this.http.post<{ feedback: Record<string, unknown>; model_training_note: string }>(
+      `${this.baseUrl}/farms/${farmId}/recommendations/${farmRecId}/feedback`,
+      payload
+    );
+  }
+
+  adminInterventionCatalog(): Observable<InterventionCatalogRow[]> {
+    return this.http.get<InterventionCatalogRow[]>(`${this.baseUrl}/admin/intervention-catalog`);
+  }
+
+  adminCreateInterventionCatalog(payload: Partial<InterventionCatalogRow> & { title: string }): Observable<InterventionCatalogRow> {
+    return this.http.post<InterventionCatalogRow>(`${this.baseUrl}/admin/intervention-catalog`, payload);
+  }
+
+  adminPatchInterventionCatalog(id: number, payload: Partial<InterventionCatalogRow>): Observable<InterventionCatalogRow> {
+    return this.http.patch<InterventionCatalogRow>(`${this.baseUrl}/admin/intervention-catalog/${id}`, payload);
+  }
+
+  adminReassignFarm(farmId: number, user_id: number): Observable<AdminFarmRow> {
+    return this.http.patch<AdminFarmRow>(`${this.baseUrl}/admin/farms/${farmId}/reassign`, { user_id });
+  }
+
+  adminFarmAccessList(farmId: number): Observable<FarmAccessRow[]> {
+    return this.http.get<FarmAccessRow[]>(`${this.baseUrl}/admin/farms/${farmId}/access`);
+  }
+
+  adminGrantFarmAccess(farmId: number, payload: { user_id: number; permission_level: FarmAccessLevel }): Observable<FarmAccessRow> {
+    return this.http.post<FarmAccessRow>(`${this.baseUrl}/admin/farms/${farmId}/access`, payload);
+  }
+
+  adminRevokeFarmAccess(farmId: number, accessId: number): Observable<{ ok: boolean }> {
+    return this.http.delete<{ ok: boolean }>(`${this.baseUrl}/admin/farms/${farmId}/access/${accessId}`);
   }
 
   adminDeleteUser(userId: number): Observable<{ ok: boolean }> {

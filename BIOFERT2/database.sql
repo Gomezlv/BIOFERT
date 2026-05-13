@@ -4,10 +4,12 @@
 DROP TABLE IF EXISTS audit_log;
 DROP TABLE IF EXISTS co2eq_reduction_monthly;
 DROP TABLE IF EXISTS ch4_emissions_hourly;
+DROP TABLE IF EXISTS intervention_feedback;
 DROP TABLE IF EXISTS farm_recommendations;
 DROP TABLE IF EXISTS sensor_readings;
 DROP TABLE IF EXISTS sensors;
 DROP TABLE IF EXISTS recommendations;
+DROP TABLE IF EXISTS farm_user_access;
 DROP TABLE IF EXISTS farms;
 DROP TABLE IF EXISTS users;
 
@@ -16,7 +18,8 @@ CREATE TABLE users (
   id             SERIAL PRIMARY KEY,
   full_name      TEXT NOT NULL,
   role           TEXT NOT NULL DEFAULT 'Ganadero',
-  account_type   TEXT NOT NULL DEFAULT 'ganadero' CHECK (account_type IN ('admin', 'ganadero')),
+  account_type   TEXT NOT NULL DEFAULT 'ganadero' CHECK (account_type IN ('admin', 'ganadero', 'tecnico', 'veterinario')),
+  account_status TEXT NOT NULL DEFAULT 'active' CHECK (account_status IN ('active', 'suspended')),
   location       TEXT,
   email          TEXT UNIQUE,
   password_hash  TEXT NOT NULL,
@@ -46,6 +49,17 @@ CREATE TABLE farms (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Acceso delegado a predios (CU-06): lectura o edición sin ser titular
+CREATE TABLE farm_user_access (
+  id                   SERIAL PRIMARY KEY,
+  farm_id              INT NOT NULL REFERENCES farms(id) ON DELETE CASCADE,
+  user_id              INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  permission_level     TEXT NOT NULL CHECK (permission_level IN ('lectura','edicion')),
+  granted_by_user_id   INT REFERENCES users(id) ON DELETE SET NULL,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (farm_id, user_id)
+);
+
 CREATE TABLE sensors (
   id            SERIAL PRIMARY KEY,
   farm_id       INT NOT NULL REFERENCES farms(id) ON DELETE CASCADE,
@@ -65,21 +79,43 @@ CREATE TABLE sensor_readings (
 );
 
 CREATE TABLE recommendations (
-  id                      SERIAL PRIMARY KEY,
-  title                   TEXT NOT NULL,
-  expected_reduction_pct  NUMERIC(5,2),
-  difficulty              TEXT NOT NULL CHECK (difficulty IN ('facil','media','alta')),
-  notes                   TEXT
+  id                       SERIAL PRIMARY KEY,
+  title                    TEXT NOT NULL,
+  expected_reduction_pct   NUMERIC(5,2),
+  difficulty               TEXT NOT NULL CHECK (difficulty IN ('facil','media','alta')),
+  notes                    TEXT,
+  intervention_kind        TEXT CHECK (intervention_kind IS NULL OR intervention_kind IN ('aditivo','forraje','practica')),
+  dosage_detail            TEXT,
+  applicability_conditions TEXT,
+  bibliographic_refs       TEXT,
+  local_provider           TEXT,
+  estimated_cost_cop       NUMERIC(12,2),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by_user_id       INT REFERENCES users(id) ON DELETE SET NULL
 );
 
 CREATE TABLE farm_recommendations (
-  id                SERIAL PRIMARY KEY,
-  farm_id           INT NOT NULL REFERENCES farms(id) ON DELETE CASCADE,
-  recommendation_id INT NOT NULL REFERENCES recommendations(id) ON DELETE RESTRICT,
-  status            TEXT NOT NULL CHECK (status IN ('pendiente','aplicada','descartada')),
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  decided_at        TIMESTAMPTZ,
+  id                         SERIAL PRIMARY KEY,
+  farm_id                    INT NOT NULL REFERENCES farms(id) ON DELETE CASCADE,
+  recommendation_id        INT NOT NULL REFERENCES recommendations(id) ON DELETE RESTRICT,
+  status                     TEXT NOT NULL CHECK (status IN ('pendiente','aplicada','descartada','en_seguimiento')),
+  created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  decided_at                 TIMESTAMPTZ,
+  impact_review_scheduled_at TIMESTAMPTZ,
+  tracking_started_at        TIMESTAMPTZ,
   UNIQUE (farm_id, recommendation_id)
+);
+
+CREATE TABLE intervention_feedback (
+  id                         SERIAL PRIMARY KEY,
+  farm_recommendation_id     INT NOT NULL REFERENCES farm_recommendations(id) ON DELETE CASCADE,
+  user_id                    INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  production_change_pct      NUMERIC(8,2),
+  real_cost_cop              NUMERIC(14,2),
+  livestock_acceptability    TEXT NOT NULL CHECK (livestock_acceptability IN ('baja','media','alta')),
+  observations               TEXT,
+  queued_for_model_training  BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Emisiones agregadas por hora (para la gráfica de 24h en Inicio)
@@ -144,6 +180,8 @@ INSERT INTO users (full_name, role, account_type, location, email, password_hash
   ('Patricia Núñez Arias', 'Ganadero', 'ganadero', 'Sincelejo, Colombia', 'patricia.nunez@example.com', '7f2c7a433f8a2d88ceade978b6aadc8a:32b8e6d76be66e4d6801462aeecf0717d7c22ae19fcc4d509e9cd2e2be134cd3821bb399253c5e6ae06aa14e2309bf4eb78051232e9822e1e158bf46442e2e2c'),
   ('Ricardo Mejía Duarte', 'Ganadero', 'ganadero', 'Valledupar, Colombia', 'ricardo.mejia@example.com', '7f2c7a433f8a2d88ceade978b6aadc8a:32b8e6d76be66e4d6801462aeecf0717d7c22ae19fcc4d509e9cd2e2be134cd3821bb399253c5e6ae06aa14e2309bf4eb78051232e9822e1e158bf46442e2e2c');
 
+UPDATE users SET account_type = 'tecnico' WHERE id = 4;
+
 INSERT INTO farms (user_id, name, location, area_ha, heads_active, breeds_text, thermal_floor, altitude_m, production_model, certification_step)
 VALUES
   (1, 'Finca El Porvenir', 'Córdoba, Colombia', 320, 280, 'Brahman 60% · Angus 40%', 'Cálido', 80, 'Doble propósito', 4),
@@ -191,19 +229,95 @@ SELECT
 FROM sensors s
 CROSS JOIN generate_series(0, 23) AS gs(i);
 
-INSERT INTO recommendations (title, expected_reduction_pct, difficulty, notes)
-VALUES
-  ('Suplemento 3-NOP (Bovaer®)', 25.00, 'media', '150 mg/cabeza/día'),
-  ('Semillas de lino en concentrado', 15.00, 'facil', NULL),
-  ('Rotación intensiva de potreros', 12.00, 'alta', NULL),
-  ('Taninos condensados (Acacia)', 10.00, 'media', NULL),
-  ('Mejora de calidad de forraje', 8.00, 'facil', 'Ajuste de pastoreo y suplementación mineral'),
-  ('Aditivos en agua (ensayo)', 5.00, 'media', 'Aplicar en lote control por 30 días'),
-  ('Sombras y bebederos estratégicos', 6.50, 'facil', 'Reduce estrés térmico y mejora eficiencia');
+INSERT INTO recommendations (
+  title, expected_reduction_pct, difficulty, notes,
+  intervention_kind, dosage_detail, applicability_conditions, bibliographic_refs,
+  local_provider, estimated_cost_cop, updated_by_user_id
+) VALUES
+  (
+    'Suplemento 3-NOP (Bovaer®)', 25.00, 'media', '150 mg/cabeza/día',
+    'aditivo',
+    '60–120 mg/kg MS en concentrado; 150 mg/cabeza/día referencia para vaca lechera (validar MS ingerida).',
+    'Lotes con dieta estable (TMR o concentrado diario); no mezclar con otras moléculas metanogénicas sin asesoría.',
+    'Dijkstra et al. (2018) 3-NOP; Melgar et al. (2021) revisiones de mitigación ruminal.',
+    'Distribuidor autorizado CO — demo regional',
+    185000,
+    2
+  ),
+  (
+    'Semillas de lino en concentrado', 15.00, 'facil', NULL,
+    'forraje',
+    '50–200 g MS linaza/cabeza/día introducción gradual 7–10 días.',
+    'Vacas y novillas con espacio en mezcladora; vigilar peroxidación del aceite.',
+    'Benchaar et al. (2008) lípidos y metano ruminal.',
+    'Agroinsumos del Valle (demo)',
+    72000,
+    2
+  ),
+  (
+    'Rotación intensiva de potreros', 12.00, 'alta', NULL,
+    'practica',
+    'Tiempo de ocupación 1–3 días; descanso 21–35 días según crecimiento.',
+    'Predios con subdivisión mínima 4–8 potreros; agua en cada franja.',
+    'Teague et al. (2011) pastoreo planificado; CCA Colombia buenas prácticas.',
+    'Asesoría local pastos (demo)',
+    450000,
+    2
+  ),
+  (
+    'Taninos condensados (Acacia)', 10.00, 'media', NULL,
+    'aditivo',
+    'Forraje o extracto: 1–4% MS según especie; monitorear consumo.',
+    'Introducción lenta; evitar en vacas recién paridas sin protocolo.',
+    'Min et al. (2006) taninos y fermentación ruminal.',
+    'Forrajera La Sabana (demo)',
+    98000,
+    2
+  ),
+  (
+    'Mejora de calidad de forraje', 8.00, 'facil', 'Ajuste de pastoreo y suplementación mineral',
+    'practica',
+    'Fertilización balanceada + altura de entrada/salida documentada.',
+    'Zonas templadas/cálidas con capacidad de riego o lluvia confiable.',
+    'FAO (2019) buenas prácticas pastoreo; manual SENA ganadería sostenible.',
+    'Cooperativa agrícola (demo)',
+    55000,
+    2
+  ),
+  (
+    'Aditivos en agua (ensayo)', 5.00, 'media', 'Aplicar en lote control por 30 días',
+    'aditivo',
+    'Dosis según volumen de bebedero; lote test vs control.',
+    'Bebederos separados por lote; registro de consumo de agua.',
+    'Literatura técnica ensayos en agua (demo referencial).',
+    'Veterinaria San José (demo)',
+    110000,
+    2
+  ),
+  (
+    'Asparagopsis taxiformis (macroalga)', 40.00, 'media', 'Ensayo bromoformo bajo supervisión',
+    'aditivo',
+    'Dosis bromoformo según protocolo comercial; solo con cadena de frío.',
+    'Instalaciones con mezclado homogéneo; cumplimiento normativo local.',
+    'Roque et al. (2019) Asparagopsis; revisiones de seguridad alimentaria.',
+    'Importador marino Pacífico (demo)',
+    320000,
+    2
+  ),
+  (
+    'Sombras y bebederos estratégicos', 6.50, 'facil', 'Reduce estrés térmico y mejora eficiencia',
+    'practica',
+    'Cobertura ≥2.5 m²/cabeza en zona de descanso; caudal agua ≥10 L/min.',
+    'Pisos térmicos cálidos; THI elevado en verano.',
+    'Renaudeau et al. (2012) estrés térmico en rumiantes.',
+    'Materiales ganaderos SA (demo)',
+    130000,
+    2
+  );
 
-INSERT INTO farm_recommendations (farm_id, recommendation_id, status)
+INSERT INTO farm_recommendations (farm_id, recommendation_id, status, impact_review_scheduled_at, tracking_started_at)
 VALUES
-  (1, 1, 'pendiente'),
+  (1, 1, 'en_seguimiento', NOW() + interval '14 days', NOW() - interval '3 days'),
   (1, 2, 'pendiente'),
   (1, 3, 'aplicada'),
   (1, 4, 'descartada'),
@@ -211,7 +325,7 @@ VALUES
   (1, 6, 'aplicada'),
   (2, 2, 'pendiente'),
   (2, 3, 'pendiente'),
-  (2, 7, 'pendiente'),
+  (2, 8, 'pendiente'),
   (2, 6, 'aplicada');
 
 -- Emisiones últimas 24h (kg CH4 / hora) para la finca 1
@@ -221,7 +335,7 @@ SELECT
   1,
   date_trunc('hour', NOW()) - (gs.i || ' hours')::interval,
   (3.5 + (gs.i % 6) * 0.6 + CASE WHEN (gs.i % 9)=0 THEN 1.0 ELSE 0 END)::numeric(10,2)
-FROM generate_series(0, 23) AS gs(i)
+FROM generate_series(0, 24 * 12 - 1) AS gs(i)
 ON CONFLICT DO NOTHING;
 
 -- Emisiones 24h para la finca 2 (otra forma de variación)
@@ -230,7 +344,7 @@ SELECT
   2,
   date_trunc('hour', NOW()) - (gs.i || ' hours')::interval,
   (1.8 + (gs.i % 5) * 0.45 + CASE WHEN (gs.i % 7)=0 THEN 0.8 ELSE 0 END)::numeric(10,2)
-FROM generate_series(0, 23) AS gs(i)
+FROM generate_series(0, 24 * 12 - 1) AS gs(i)
 ON CONFLICT DO NOTHING;
 
 INSERT INTO ch4_emissions_hourly (farm_id, hour_ts, kg_ch4)
@@ -239,7 +353,7 @@ SELECT
   date_trunc('hour', NOW()) - (gs.i || ' hours')::interval,
   (1.0 + (f.id % 9) * 0.12 + (gs.i % 6) * 0.25 + CASE WHEN (gs.i + f.id) % 11 = 0 THEN 0.6 ELSE 0 END)::numeric(10,2)
 FROM farms f
-CROSS JOIN generate_series(0, 23) AS gs(i)
+CROSS JOIN generate_series(0, 24 * 12 - 1) AS gs(i)
 WHERE f.id BETWEEN 3 AND 13
 ON CONFLICT DO NOTHING;
 
@@ -287,4 +401,16 @@ VALUES
   (4, 'login', '{}', NOW() - interval '3 days'),
   (5, 'actualizar_perfil', '{}', NOW() - interval '10 days'),
   (8, 'login', '{}', NOW() - interval '1 hour');
+
+-- Demo CU-06: técnico (usuario 4) con lectura en finca de Carlos (1)
+INSERT INTO farm_user_access (farm_id, user_id, permission_level, granted_by_user_id)
+VALUES (1, 4, 'lectura', 2);
+
+INSERT INTO intervention_feedback (
+  farm_recommendation_id, user_id, production_change_pct, real_cost_cop, livestock_acceptability, observations, queued_for_model_training
+)
+SELECT fr.id, 1, -1.2, 175000, 'media', 'Consumo estable; monitoreo continuo en corral norte.', TRUE
+FROM farm_recommendations fr
+WHERE fr.farm_id = 1 AND fr.recommendation_id = 1 AND fr.status = 'en_seguimiento'
+LIMIT 1;
 

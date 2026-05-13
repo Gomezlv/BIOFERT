@@ -1,10 +1,9 @@
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { finalize, forkJoin } from 'rxjs';
+import { catchError, finalize, forkJoin, of } from 'rxjs';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import {
-  AdminConfigSummary,
   AdminFarmRow,
   AdminOverview,
   AdminReportsSummary,
@@ -13,9 +12,14 @@ import {
   AdminUserImpact,
   AdminUserRow,
   ApiService,
+  DietaryRecommendationItem,
+  DietaryRecommendationsResponse,
   Difficulty,
   Farm,
+  FarmAccessRow,
   FarmRecommendationRow,
+  InterventionCatalogRow,
+  LivestockAcceptability,
   Profile,
   RecStatus,
   Reports,
@@ -23,7 +27,7 @@ import {
 } from './api.service';
 import { AuthService } from './auth.service';
 
-type AdminTab = 'panel' | 'usuarios' | 'fincas' | 'sensores' | 'reportes' | 'config';
+type AdminTab = 'panel' | 'usuarios' | 'fincas' | 'sensores' | 'reportes' | 'catalogo' | 'config';
 
 type AiRecommendation = {
   id: string;
@@ -112,8 +116,28 @@ export class App implements OnInit {
   protected readonly adminUsers = signal<AdminUserRow[]>([]);
   protected readonly adminFarms = signal<AdminFarmRow[]>([]);
   protected readonly adminSensors = signal<AdminSensorRow[]>([]);
+  /** Filtros de la tabla admin · Sensores */
+  protected readonly adminSensorStatusFilter = signal<'todos' | 'activo' | 'alerta' | 'inactivo'>('todos');
+  protected readonly adminSensorFarmFilter = signal<number | null>(null);
+  protected readonly adminSensorFarmSelectValue = computed(() => {
+    const v = this.adminSensorFarmFilter();
+    return v == null ? '' : `${v}`;
+  });
   protected readonly adminReports = signal<AdminReportsSummary | null>(null);
-  protected readonly adminConfig = signal<AdminConfigSummary | null>(null);
+  protected readonly adminCatalog = signal<InterventionCatalogRow[]>([]);
+
+  protected readonly dietaryPlan = signal<DietaryRecommendationsResponse | null>(null);
+  protected readonly dietaryBusy = signal(false);
+  protected readonly interventionUiMessage = signal<{ type: 'ok' | 'err'; text: string } | null>(null);
+  protected readonly feedbackBusy = signal(false);
+  protected readonly feedbackMessage = signal<string | null>(null);
+
+  protected readonly showAdminCreateUser = signal(false);
+  protected readonly adminCreateUserBusy = signal(false);
+  protected readonly adminCreateUserMessage = signal<string | null>(null);
+
+  protected readonly farmAccessByFarmId = signal<Record<number, FarmAccessRow[]>>({});
+  protected readonly farmAccessBusy = signal(false);
 
   protected readonly profile = signal<Profile | null>(null);
   protected readonly farms = signal<Farm[]>([]);
@@ -140,8 +164,25 @@ export class App implements OnInit {
     email: ['', [Validators.required, Validators.email]],
     role: ['', Validators.required],
     location: [''],
-    account_type: this.fb.nonNullable.control<'admin' | 'ganadero'>('ganadero'),
+    account_type: this.fb.nonNullable.control<'admin' | 'ganadero' | 'tecnico' | 'veterinario'>('ganadero'),
+    account_status: this.fb.nonNullable.control<'active' | 'suspended'>('active'),
     new_password: [''],
+  });
+
+  protected readonly adminCreateUserForm = this.fb.nonNullable.group({
+    full_name: ['', Validators.required],
+    email: ['', [Validators.required, Validators.email]],
+    password: ['', [Validators.required, Validators.minLength(6)]],
+    role: ['Ganadero'],
+    location: [''],
+    account_type: this.fb.nonNullable.control<'admin' | 'ganadero' | 'tecnico' | 'veterinario'>('ganadero'),
+  });
+
+  protected readonly interventionFeedbackForm = this.fb.nonNullable.group({
+    production_change_pct: [null as number | null],
+    real_cost_cop: [null as number | null],
+    livestock_acceptability: this.fb.nonNullable.control<LivestockAcceptability>('media'),
+    observations: [''],
   });
 
   protected readonly sensors = signal<Sensor[]>([]);
@@ -149,7 +190,7 @@ export class App implements OnInit {
   protected readonly farmRecommendations = signal<FarmRecommendationRow[]>([]);
   protected readonly selectedFarmRecDetailId = signal<number | null>(null);
   /** Filtro de lista en la pestaña Recomendaciones (aplicada = implementada en UI). */
-  protected readonly recListFilter = signal<'todas' | 'pendiente' | 'aplicada' | 'descartada'>('todas');
+  protected readonly recListFilter = signal<'todas' | 'pendiente' | 'aplicada' | 'descartada' | 'en_seguimiento'>('todas');
 
   protected readonly dashboard = signal<{
     alertSensor: { code: string; zone: string; ch4_ppm: number | null; threshold_ppm: number } | null;
@@ -196,6 +237,25 @@ export class App implements OnInit {
   protected readonly adminPanelInactiveSensors = computed(() =>
     this.adminSensors().filter(x => x.status === 'inactivo').slice(0, 8)
   );
+
+  protected readonly adminSensorFarmSelectOptions = computed(() => {
+    const m = new Map<number, string>();
+    for (const s of this.adminSensors()) {
+      m.set(s.farm_id, s.farm_name);
+    }
+    return [...m.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+  });
+
+  protected readonly filteredAdminSensors = computed(() => {
+    let list = [...this.adminSensors()];
+    const st = this.adminSensorStatusFilter();
+    if (st !== 'todos') list = list.filter(x => x.status === st);
+    const fid = this.adminSensorFarmFilter();
+    if (fid != null) list = list.filter(x => x.farm_id === fid);
+    return list;
+  });
 
   /** Top fincas por t CO₂eq acumulado (barra horizontal %) */
   protected readonly adminPanelCo2eqByFarm = computed(() => {
@@ -545,7 +605,7 @@ export class App implements OnInit {
       farms: this.api.adminFarms(),
       sensors: this.api.adminSensors(),
       reports: this.api.adminReportsSummary(),
-      config: this.api.adminConfigSummary(),
+      catalog: this.api.adminInterventionCatalog().pipe(catchError(() => of([]))),
     }).subscribe({
       next: v => {
         this.adminOverview.set(v.overview);
@@ -553,13 +613,23 @@ export class App implements OnInit {
         this.adminFarms.set(v.farms);
         this.adminSensors.set(v.sensors);
         this.adminReports.set(v.reports);
-        this.adminConfig.set(v.config);
+        this.adminCatalog.set(v.catalog);
       },
       error: err => {
         const msg = err?.error?.error ?? 'No se pudieron cargar los datos de administración';
         this.adminLoadError.set(msg);
       },
     });
+  }
+
+  protected setAdminSensorStatusFilter(v: 'todos' | 'activo' | 'alerta' | 'inactivo'): void {
+    this.adminSensorStatusFilter.set(v);
+  }
+
+  protected onAdminSensorFarmFilterChange(ev: Event): void {
+    const el = ev.target as HTMLSelectElement;
+    const raw = el.value;
+    this.adminSensorFarmFilter.set(raw === '' ? null : Number(raw));
   }
 
   protected navigateAdmin(tab: AdminTab): void {
@@ -718,7 +788,7 @@ export class App implements OnInit {
     this.adminFarms.set([]);
     this.adminSensors.set([]);
     this.adminReports.set(null);
-    this.adminConfig.set(null);
+    this.adminCatalog.set([]);
     this.loginForm.reset();
     this.registerForm.reset();
   }
@@ -896,7 +966,25 @@ export class App implements OnInit {
     this.screen.set(id);
     if (id !== 'recomendaciones') {
       this.selectedFarmRecDetailId.set(null);
+    } else {
+      this.loadDietaryRecommendations();
     }
+  }
+
+  protected loadDietaryRecommendations(): void {
+    const fid = this.selectedFarmId();
+    if (fid == null) return;
+    this.dietaryBusy.set(true);
+    this.api.dietaryRecommendations(fid).subscribe({
+      next: d => {
+        this.dietaryPlan.set(d);
+        this.dietaryBusy.set(false);
+      },
+      error: () => {
+        this.dietaryPlan.set(null);
+        this.dietaryBusy.set(false);
+      },
+    });
   }
 
   protected selectFarm(farmId: number): void {
@@ -942,6 +1030,7 @@ export class App implements OnInit {
     this.expandedAdminFarmId.set(farmId);
     this.adminFarmDetailBusy.set(true);
     this.adminFarmReportsExtra.set(null);
+    this.loadFarmAccessList(farmId);
     this.api.reports(farmId).subscribe({
       next: r => {
         this.adminFarmReportsExtra.set(r);
@@ -991,7 +1080,8 @@ export class App implements OnInit {
       email: (u.email ?? '').trim(),
       role: u.role,
       location: u.location ?? '',
-      account_type: (u.account_type ?? 'ganadero') as 'admin' | 'ganadero',
+      account_type: (u.account_type ?? 'ganadero') as 'admin' | 'ganadero' | 'tecnico' | 'veterinario',
+      account_status: (u.account_status ?? 'active') as 'active' | 'suspended',
       new_password: '',
     });
     this.showAdminUserEditor.set(true);
@@ -1016,7 +1106,8 @@ export class App implements OnInit {
       role: string;
       location: string | null;
       email: string;
-      account_type: 'admin' | 'ganadero';
+      account_type: 'admin' | 'ganadero' | 'tecnico' | 'veterinario';
+      account_status: 'active' | 'suspended';
       new_password?: string;
     } = {
       full_name: v.full_name.trim(),
@@ -1024,6 +1115,7 @@ export class App implements OnInit {
       location: v.location.trim() || null,
       email: v.email.trim(),
       account_type: v.account_type,
+      account_status: v.account_status,
     };
     const np = v.new_password.trim();
     if (np) payload.new_password = np;
@@ -1103,6 +1195,9 @@ export class App implements OnInit {
       next: rows => this.farmRecommendations.set(rows),
       error: () => this.farmRecommendations.set([]),
     });
+    if (this.screen() === 'recomendaciones') {
+      this.loadDietaryRecommendations();
+    }
   }
 
   protected onFarmSelect(nextFarmId: number) {
@@ -1122,9 +1217,10 @@ export class App implements OnInit {
     pendiente: 'Pendiente',
     aplicada: 'Implementada',
     descartada: 'Descartada',
+    en_seguimiento: 'En seguimiento',
   };
 
-  protected setRecListFilter(f: 'todas' | 'pendiente' | 'aplicada' | 'descartada'): void {
+  protected setRecListFilter(f: 'todas' | 'pendiente' | 'aplicada' | 'descartada' | 'en_seguimiento'): void {
     this.recListFilter.set(f);
   }
 
@@ -1134,6 +1230,147 @@ export class App implements OnInit {
 
   protected closeFarmRecDetail(): void {
     this.selectedFarmRecDetailId.set(null);
+    this.interventionUiMessage.set(null);
+    this.feedbackMessage.set(null);
+    this.interventionFeedbackForm.reset({
+      production_change_pct: null,
+      real_cost_cop: null,
+      livestock_acceptability: 'media',
+      observations: '',
+    });
+  }
+
+  protected formatCop(value: number | null | undefined): string {
+    if (value == null || Number.isNaN(Number(value))) return '—';
+    return `$ ${Number(value).toLocaleString('es-CO', { maximumFractionDigits: 0 })} COP`;
+  }
+
+  protected adoptDietaryItem(it: DietaryRecommendationItem): void {
+    const farmId = this.selectedFarmId();
+    if (farmId == null || it.farm_rec_id) return;
+    this.interventionUiMessage.set(null);
+    this.api.adoptCatalogIntervention(farmId, it.recommendation_id).subscribe({
+      next: () => {
+        this.interventionUiMessage.set({ type: 'ok', text: 'Intervención añadida al predio (pendiente).' });
+        this.refreshAll();
+        this.loadDietaryRecommendations();
+      },
+      error: err => {
+        this.interventionUiMessage.set({ type: 'err', text: err?.error?.error ?? 'No se pudo vincular' });
+      },
+    });
+  }
+
+  protected activateTrackingRow(rd: FarmRecommendationRow): void {
+    const farmId = this.selectedFarmId();
+    if (farmId == null) return;
+    this.interventionUiMessage.set(null);
+    this.api.activateInterventionTracking(farmId, rd.farm_rec_id).subscribe({
+      next: r => {
+        this.interventionUiMessage.set({ type: 'ok', text: r.message });
+        this.refreshAll();
+        this.loadDietaryRecommendations();
+      },
+      error: err => {
+        this.interventionUiMessage.set({ type: 'err', text: err?.error?.error ?? 'No se pudo activar' });
+      },
+    });
+  }
+
+  protected submitInterventionFeedback(rd: FarmRecommendationRow): void {
+    const farmId = this.selectedFarmId();
+    if (farmId == null) return;
+    const v = this.interventionFeedbackForm.getRawValue();
+    this.feedbackBusy.set(true);
+    this.feedbackMessage.set(null);
+    this.api
+      .interventionFeedback(farmId, rd.farm_rec_id, {
+        production_change_pct: v.production_change_pct,
+        real_cost_cop: v.real_cost_cop,
+        livestock_acceptability: v.livestock_acceptability,
+        observations: v.observations?.trim() || null,
+      })
+      .subscribe({
+        next: r => {
+          this.feedbackBusy.set(false);
+          this.feedbackMessage.set(r.model_training_note);
+          this.interventionFeedbackForm.reset({
+            production_change_pct: null,
+            real_cost_cop: null,
+            livestock_acceptability: 'media',
+            observations: '',
+          });
+        },
+        error: err => {
+          this.feedbackBusy.set(false);
+          this.feedbackMessage.set(err?.error?.error ?? 'No se pudo enviar');
+        },
+      });
+  }
+
+  protected openAdminCreateUser(): void {
+    this.adminCreateUserMessage.set(null);
+    this.adminCreateUserForm.reset({
+      full_name: '',
+      email: '',
+      password: '',
+      role: 'Ganadero',
+      location: '',
+      account_type: 'ganadero',
+    });
+    this.showAdminCreateUser.set(true);
+  }
+
+  protected closeAdminCreateUser(): void {
+    this.showAdminCreateUser.set(false);
+    this.adminCreateUserMessage.set(null);
+  }
+
+  protected submitAdminCreateUser(): void {
+    if (this.adminCreateUserForm.invalid) {
+      this.adminCreateUserForm.markAllAsTouched();
+      return;
+    }
+    const v = this.adminCreateUserForm.getRawValue();
+    this.adminCreateUserBusy.set(true);
+    this.adminCreateUserMessage.set(null);
+    this.api
+      .adminCreateUser({
+        email: v.email.trim(),
+        password: v.password,
+        full_name: v.full_name.trim(),
+        role: v.role.trim(),
+        location: v.location.trim() || undefined,
+        account_type: v.account_type,
+      })
+      .subscribe({
+        next: () => {
+          this.adminCreateUserBusy.set(false);
+          this.closeAdminCreateUser();
+          this.loadAdminData();
+        },
+        error: err => {
+          this.adminCreateUserBusy.set(false);
+          this.adminCreateUserMessage.set(err?.error?.error ?? 'No se pudo crear');
+        },
+      });
+  }
+
+  protected loadFarmAccessList(farmId: number): void {
+    this.farmAccessBusy.set(true);
+    this.api.adminFarmAccessList(farmId).subscribe({
+      next: rows => {
+        this.farmAccessByFarmId.update(m => ({ ...m, [farmId]: rows }));
+        this.farmAccessBusy.set(false);
+      },
+      error: () => this.farmAccessBusy.set(false),
+    });
+  }
+
+  protected revokeFarmAccess(farmId: number, accessId: number): void {
+    this.api.adminRevokeFarmAccess(farmId, accessId).subscribe({
+      next: () => this.loadFarmAccessList(farmId),
+    });
   }
 
   protected difficultyLabel(d: Difficulty): string {
@@ -1142,7 +1379,14 @@ export class App implements OnInit {
   }
 
   protected recStatusBadgeClasses(status: RecStatus): string {
-    const suf = status === 'pendiente' ? 'pending' : status === 'aplicada' ? 'applied' : 'rejected';
+    const suf =
+      status === 'pendiente'
+        ? 'pending'
+        : status === 'aplicada'
+          ? 'applied'
+          : status === 'en_seguimiento'
+            ? 'tracking'
+            : 'rejected';
     return `badge ${suf}`;
   }
 
